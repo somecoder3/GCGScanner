@@ -17,11 +17,11 @@ Der Nutzer kommt aus der Webentwicklung.
 
 - **Kartendatenbank fertig**: `data/cards.db` (committet), erzeugt von `tools/carddb/build_carddb.py`.
   1290 Karten, 2205 Druckvarianten. Details: `tools/carddb/README.md`.
-- **PWA-Machbarkeitstest fertig** in `pwa-spike/` (siehe `pwa-spike/README.md`), aber
-  **noch nicht am echten Handy getestet**. Das ist der nächste Schritt (zu Hause, gleiches WLAN).
-- **Plattform-Entscheidung offen**: PWA (vom Nutzer bevorzugt, Web-Hintergrund) vs. native
-  Kotlin-App. Hängt vom Handy-Test ab (Bilder/s und Trefferquote). Native wurde vorgeschlagen,
-  ist aber nicht angefangen; auf dem Arbeitsrechner fehlten Android Studio, Java und Node.
+- **PWA-Machbarkeitstest fertig** in `pwa-spike/` (siehe `pwa-spike/README.md`) und am Handy
+  getestet (2. Nov. 2026, Android, Chrome): **WebGPU ~19 Bilder/s bei ~45 ms Modell**, wasm unter
+  10 Bilder/s bei über 100 ms. Erkennung laut Nutzer „ganz gut, auch mit Sleeves“.
+- **Plattform-Entscheidung offen**, aber die PWA ist nach dem Handy-Test brauchbar (vom Nutzer
+  bevorzugt, Web-Hintergrund). Native Kotlin-App wurde vorgeschlagen, ist nicht angefangen.
 
 ## Fakten, die schon geprüft sind
 
@@ -92,12 +92,19 @@ Pfad gebunden und sollte neu erstellt werden.
 Handy-Test: `python pwa-spike/serve.py --https` → angezeigte `https://<LAN-IP>:8443/` in Chrome öffnen,
 Zertifikatswarnung bestätigen, ggf. Python in der Windows-Firewall erlauben. Das Zertifikat liegt in
 `build/cert/` und enthält die IPs vom Zeitpunkt der Erzeugung. Bei neuer IP `build/cert/` löschen.
+Erreicht Chrome am Handy den PC nicht (auch nicht die FritzBox), fehlt Chrome die Android-Berechtigung
+„Geräte in der Nähe“ (Zugriff aufs lokale Netz). Firefox braucht sie nicht. Kommt eine Anfrage an,
+steht sie im Server-Log, auch ein abgelehntes Zertifikat (`TLS handshake failed`).
 
-## Beim Handy-Test zu klären
+## Erkenntnisse aus dem Handy-Test
 
-- Bilder/s und ms Modell (oben links im Scanner) mit `wasm` und mit `?backend=webgpu`.
-- Wie oft ist der grüne (stabile) Treffer richtig? Sleeves, Folienkarten, Licht?
-- Danach: PWA oder native entscheiden.
+- WebGPU ist am Handy gut 2× schneller als wasm → als Standard-Backend nehmen.
+- Das Handy hat zwei Rückkameras; die automatisch gewählte war dauerhaft unscharf. Der Scanner hat
+  deshalb eine Objektivauswahl (gespeichert), dazu Dauer-Autofokus, Tippen zum Fokussieren und Zoom.
+- Nutzerwunsch: nur **ein** Treffer, groß und lesbar, über 500 ms geglättet; Kamera an/aus; alles
+  ohne Scrollen auf einem Bildschirm.
+- Noch offen: Trefferquote genauer messen (Folienkarten, Licht), und wie die Variantenauswahl
+  (Nachdrucke derselben Illustration) in der Übersicht aussehen soll.
 
 ## Offene Punkte / noch nicht recherchiert
 
@@ -106,8 +113,10 @@ Zertifikatswarnung bestätigen, ggf. Python in der Windows-Firewall erlauben. Da
   Token-Schutz einen kleinen Proxy (z. B. einen Cloudflare Worker).
 - ExBurst-Login und Import: keine offizielle API bekannt. Lieber die ExBurst-Entwickler fragen, statt
   die interne API nachzubauen. Aus einer PWA ginge es ebenfalls nur über einen Proxy.
-- Kartenbilder gehören Bandai: für privaten Gebrauch ok, nicht öffentlich mit ausliefern
-  (zur Laufzeit von der offiziellen Seite laden).
+- Kartenbilder gehören Bandai: für privaten Gebrauch ok, nicht öffentlich mit ausliefern.
+  **Direkt einbinden geht nicht**: gundam-gcg.com sendet `Cross-Origin-Resource-Policy: same-site`,
+  Browser zeigen die Bilder auf fremden Seiten nicht an. Der Spike nimmt deshalb die lokalen Kopien
+  über `/ref-images/` vom Dev-Server. Für eine echte PWA braucht es einen Proxy oder eine andere Quelle.
 
 ## Konventionen
 

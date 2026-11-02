@@ -7,53 +7,79 @@
   <title>GCG Scanner – Test</title>
   <link rel="stylesheet" href="css/style.css">
   <style>
-    body { padding: 8px 16px 16px; }
-    .viewer { position: relative; width: 100%; max-width: 640px; margin: 0 auto; background: #000; border-radius: 10px; overflow: hidden; }
-    .viewer video { display: block; width: 100%; height: auto; }
-    /* Card guide: 63 x 88 mm aspect, centred. The same percentages are used to crop the frame. */
+    body { padding: 8px 8px 16px; }
+    .controls { width: 100%; max-width: 640px; margin: 0 auto 8px; justify-content: space-between; }
+    /* Header plus viewer fill exactly one screen, so guide, hits and buttons are all visible at once. */
+    .screen { display: flex; flex-direction: column; height: calc(100dvh - 16px); min-height: 480px; max-height: 1060px; }
+    .viewer {
+      position: relative; width: 100%; max-width: 640px; margin: 0 auto; flex: 1; min-height: 0;
+      background: #000; border-radius: 10px; overflow: hidden;
+      container-type: size; touch-action: manipulation; user-select: none;
+    }
+    .viewer video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+    /* Card guide: 63 x 88 mm aspect, in the upper part above the HUD. guideRegion() crops exactly this box. */
     .guide {
-      position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
-      height: 82%; aspect-ratio: 63 / 88;
+      position: absolute; left: 50%; top: 5cqh; transform: translateX(-50%);
+      height: min(58cqh, 128cqw); aspect-ratio: 63 / 88;
       border: 3px solid var(--warn); border-radius: 10px;
       box-shadow: 0 0 0 100vmax rgba(0, 0, 0, 0.45);
-      transition: border-color 0.15s;
+      transition: border-color 0.15s; pointer-events: none;
     }
     .guide.stable { border-color: var(--ok); }
-    .stats { position: absolute; left: 8px; top: 6px; font-size: 12px; color: #fff; text-shadow: 0 0 3px #000; }
-    .candidates { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; max-width: 640px; margin: 10px auto; }
-    .candidate { background: var(--panel); border: 2px solid transparent; border-radius: 8px; padding: 6px; font-size: 12px; text-align: left; }
+    .top { position: absolute; left: 8px; right: 8px; top: 6px; display: flex; gap: 8px; align-items: center; }
+    .stats { flex: 1; font-size: 12px; color: #fff; text-shadow: 0 0 3px #000; }
+    .top select { padding: 4px 6px; font-size: 12px; max-width: 45%; }
+    .zoom { position: absolute; left: 12px; right: 12px; top: 5cqh; margin-top: calc(min(58cqh, 128cqw) + 6px); display: flex; gap: 8px; align-items: center; font-size: 12px; color: #fff; }
+    .zoom input { flex: 1; }
+    .focus-ring { position: absolute; width: 56px; height: 56px; margin: -28px 0 0 -28px; border: 2px solid #fff; border-radius: 50%; pointer-events: none; animation: ring 0.8s ease-out forwards; }
+    @keyframes ring { from { transform: scale(1.4); opacity: 1; } to { transform: scale(1); opacity: 0; } }
+    .hud { position: absolute; left: 0; right: 0; bottom: 0; padding: 24px 8px 8px; background: linear-gradient(transparent, rgba(0, 0, 0, 0.8) 24px); }
+    .candidates { margin-bottom: 8px; }
+    /* One large hit: tapping it adds the card, like the button. */
+    .candidate { display: flex; gap: 10px; align-items: center; width: 100%; min-height: 84px; padding: 6px; text-align: left; border: 2px solid transparent; background: rgba(28, 33, 40, 0.9); }
     .candidate.best { border-color: var(--ok); }
-    .candidate img { width: 100%; border-radius: 4px; display: block; margin-bottom: 4px; }
-    .candidate b { display: block; }
+    .candidate img { width: 52px; border-radius: 4px; flex: none; }
+    .candidate div { min-width: 0; }
+    .candidate b { display: block; font-size: 16px; }
+    .candidate .name { display: block; font-size: 14px; }
+    .candidate .score { color: var(--muted); font-size: 13px; }
+    .actions { display: flex; gap: 6px; }
+    .actions button { flex: 1; padding: 10px 6px; }
     .list { max-width: 640px; margin: 0 auto; }
     .item { display: flex; gap: 10px; align-items: center; padding: 6px 0; border-bottom: 1px solid #2a3038; }
     .item img { width: 44px; border-radius: 3px; }
     .item .name { flex: 1; min-width: 0; }
     .item .name small { display: block; color: var(--muted); }
     .item button { padding: 4px 10px; }
-    .controls { max-width: 640px; margin: 0 auto 10px; justify-content: space-between; }
   </style>
 </head>
 <body>
-  <div class="row controls">
-    <h1 style="margin:0">GCG Scanner <span class="muted" style="font-size:13px">Machbarkeitstest</span></h1>
-    <label class="muted">Backend <select id="backend"><option>wasm</option><option>webgpu</option></select></label>
+  <div class="screen">
+  <div class="row controls" style="flex-wrap: nowrap">
+    <h1 style="margin:0; font-size:18px; white-space:nowrap">GCG Scanner</h1>
+    <label class="muted">Backend <select id="backend" style="padding:4px 8px"><option>wasm</option><option>webgpu</option></select></label>
   </div>
 
   <div class="viewer" id="viewer">
     <video id="video" playsinline muted></video>
     <div class="guide" id="guide"></div>
-    <div class="stats" id="stats">Lade …</div>
+    <div class="top">
+      <div class="stats" id="stats">Lade …</div>
+      <select id="lens" hidden aria-label="Kamera"></select>
+    </div>
+    <label class="zoom" id="zoom-row" hidden>Zoom <input id="zoom" type="range"><span id="zoom-value"></span></label>
+    <div class="hud" id="hud">
+      <div class="candidates" id="candidates"></div>
+      <div class="actions">
+        <button id="camera" class="primary">Kamera starten</button>
+        <button id="take" disabled>Übernehmen</button>
+        <button id="to-list">Liste (<span id="hud-count">0</span>)</button>
+      </div>
+    </div>
+  </div>
   </div>
 
-  <div class="row controls" style="margin-top:10px">
-    <button id="camera" class="primary">Kamera starten</button>
-    <button id="take" disabled>Beste übernehmen</button>
-  </div>
-
-  <div class="candidates" id="candidates"></div>
-
-  <div class="list">
+  <div class="list" id="list">
     <div class="row" style="justify-content: space-between">
       <h2>Erkannte Karten (<span id="count">0</span>)</h2>
       <div class="row">
@@ -73,17 +99,27 @@
     const guide = $("guide");
     const stats = $("stats");
     const params = new URLSearchParams(location.search);
-    const backend = params.get("backend") ?? "wasm";
+    // WebGPU was about twice as fast as wasm on the test phone, so it is the default where available.
+    const backend = params.get("backend") ?? (navigator.gpu ? "webgpu" : "wasm");
     $("backend").value = backend;
     $("backend").addEventListener("change", (e) => {
       params.set("backend", e.target.value);
       location.search = params;
     });
 
-    // A match counts as stable once the same variant wins this many frames in a row.
+    // Hits are averaged over this time window so names and percentages do not jump every frame.
+    const WINDOW_MS = 500;
+    const SEARCH_K = 5;
+    const SHOW_K = 1;
+    // A match counts as stable once the same variant leads the smoothed ranking this many frames in a row.
     const STABLE_FRAMES = 3;
+    const LENS_KEY = "gcg-scanner-lens";
+
     const collection = new Map(); // exburst id -> { variant, count }
-    let index, embedder, running = false, lastBest = null, streak = 0, current = [];
+    let index, embedder;
+    let stream = null, track = null, generation = 0;
+    let history = [], current = [], lastBest = null, streak = 0, shownIds = "";
+    let focusInfo = "", focusTimer = 0;
 
     try {
       [index, embedder] = await Promise.all([loadIndex(), createEmbedder({ backend })]);
@@ -93,39 +129,150 @@
       $("camera").disabled = true;
     }
 
-    $("camera").addEventListener("click", async () => {
-      if (running) return;
+    // ---- Camera ---------------------------------------------------------------------------------
+
+    $("camera").addEventListener("click", () => (stream ? stopCamera() : startCamera()));
+    $("lens").addEventListener("change", (e) => {
+      try { localStorage.setItem(LENS_KEY, e.target.value); } catch {}
+      startCamera();
+    });
+    // Free the camera when the page goes to the background.
+    document.addEventListener("visibilitychange", () => document.hidden && stream && stopCamera());
+
+    async function startCamera() {
+      stopCamera();
+      const gen = ++generation;
+      let lens = null;
+      try { lens = localStorage.getItem(LENS_KEY); } catch {}
+      const size = { width: { ideal: 1920 }, height: { ideal: 1080 } };
       try {
-        const stream = await navigator.mediaDevices.getUserMedia({
-          audio: false,
-          video: { facingMode: { ideal: "environment" }, width: { ideal: 1920 }, height: { ideal: 1080 } },
-        });
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({
+            audio: false,
+            video: lens ? { deviceId: { exact: lens }, ...size } : { facingMode: { ideal: "environment" }, ...size },
+          });
+        } catch (error) {
+          if (!lens) throw error;
+          // The saved lens is gone (other phone, camera unplugged): fall back to the default back camera.
+          try { localStorage.removeItem(LENS_KEY); } catch {}
+          stream = await navigator.mediaDevices.getUserMedia({ audio: false, video: { facingMode: { ideal: "environment" }, ...size } });
+        }
+        if (gen !== generation) return stream.getTracks().forEach((t) => t.stop());
+        track = stream.getVideoTracks()[0];
         video.srcObject = stream;
         await video.play();
-        running = true;
-        $("camera").disabled = true;
-        loop();
+        await setupFocus();
+        setupZoom();
+        await fillLensList();
+        $("camera").textContent = "Kamera stoppen";
+        $("camera").classList.remove("primary");
+        loop(gen);
       } catch (error) {
+        stopCamera();
         stats.textContent = `Kamera nicht verfügbar: ${error.message}`;
+      }
+    }
+
+    function stopCamera() {
+      generation++;
+      stream?.getTracks().forEach((t) => t.stop());
+      stream = track = null;
+      video.srcObject = null;
+      clearTimeout(focusTimer);
+      history = []; current = []; lastBest = null; streak = 0;
+      guide.classList.remove("stable");
+      $("take").disabled = true;
+      $("zoom-row").hidden = true;
+      $("camera").textContent = "Kamera starten";
+      $("camera").classList.add("primary");
+      renderCandidates();
+    }
+
+    async function fillLensList() {
+      const cameras = (await navigator.mediaDevices.enumerateDevices()).filter((d) => d.kind === "videoinput");
+      const select = $("lens");
+      select.hidden = cameras.length < 2;
+      select.replaceChildren(...cameras.map((camera, i) => new Option(camera.label || `Kamera ${i + 1}`, camera.deviceId)));
+      select.value = track.getSettings().deviceId ?? "";
+    }
+
+    // Continuous autofocus if the camera supports it; tapping the picture refocuses on that spot.
+    async function setupFocus() {
+      const caps = track.getCapabilities?.() ?? {};
+      const modes = caps.focusMode ?? [];
+      if (modes.includes("continuous")) {
+        await track.applyConstraints({ advanced: [{ focusMode: "continuous" }] }).catch(() => {});
+      }
+      const mode = track.getSettings().focusMode;
+      focusInfo = mode === "continuous" ? "AF kontinuierlich" : mode ? `AF ${mode}` : "AF nicht steuerbar";
+    }
+
+    $("viewer").addEventListener("click", async (event) => {
+      if (!track || event.target.closest(".hud, .top, .zoom")) return;
+      const viewer = $("viewer").getBoundingClientRect();
+      const ring = document.createElement("div");
+      ring.className = "focus-ring";
+      ring.style.left = `${event.clientX - viewer.left}px`;
+      ring.style.top = `${event.clientY - viewer.top}px`;
+      $("viewer").append(ring);
+      setTimeout(() => ring.remove(), 800);
+
+      const modes = track.getCapabilities?.().focusMode ?? [];
+      const [x, y] = toFrame(event.clientX, event.clientY);
+      const point = { x: x / video.videoWidth, y: y / video.videoHeight };
+      const focus = {};
+      if (navigator.mediaDevices.getSupportedConstraints().pointsOfInterest) focus.pointsOfInterest = [point];
+      if (modes.includes("single-shot")) focus.focusMode = "single-shot";
+      else if (modes.includes("continuous")) focus.focusMode = "continuous";
+      if (!Object.keys(focus).length) return;
+      await track.applyConstraints({ advanced: [focus] }).catch(() => {});
+      // After a single-shot focus, go back to tracking so the next card is sharp again.
+      clearTimeout(focusTimer);
+      if (focus.focusMode === "single-shot" && modes.includes("continuous")) {
+        focusTimer = setTimeout(() => track?.applyConstraints({ advanced: [{ focusMode: "continuous" }] }).catch(() => {}), 2500);
       }
     });
 
-    // Maps the on-screen guide rectangle to pixels of the camera frame.
-    function guideRegion() {
-      const v = video.getBoundingClientRect();
-      const g = guide.getBoundingClientRect();
-      const sx = video.videoWidth / v.width;
-      const sy = video.videoHeight / v.height;
-      return [(g.left - v.left) * sx, (g.top - v.top) * sy, g.width * sx, g.height * sy];
+    // Optical/digital zoom lets you hold the phone further away, where the lens can focus.
+    function setupZoom() {
+      const caps = track.getCapabilities?.() ?? {};
+      if (!caps.zoom || caps.zoom.max <= caps.zoom.min) return;
+      const input = $("zoom");
+      Object.assign(input, { min: caps.zoom.min, max: caps.zoom.max, step: caps.zoom.step || 0.1, value: track.getSettings().zoom ?? caps.zoom.min });
+      $("zoom-value").textContent = `${Number(input.value).toFixed(1)}×`;
+      $("zoom-row").hidden = false;
+      input.oninput = () => {
+        $("zoom-value").textContent = `${Number(input.value).toFixed(1)}×`;
+        track?.applyConstraints({ advanced: [{ zoom: Number(input.value) }] }).catch(() => {});
+      };
     }
 
-    async function loop() {
+    // The video is drawn with object-fit: cover, so map screen points through that scale and crop.
+    function toFrame(clientX, clientY) {
+      const v = video.getBoundingClientRect();
+      const scale = Math.max(v.width / video.videoWidth, v.height / video.videoHeight);
+      const offsetX = (v.width - video.videoWidth * scale) / 2;
+      const offsetY = (v.height - video.videoHeight * scale) / 2;
+      return [(clientX - v.left - offsetX) / scale, (clientY - v.top - offsetY) / scale, scale];
+    }
+
+    // Maps the on-screen guide rectangle to pixels of the camera frame.
+    function guideRegion() {
+      const g = guide.getBoundingClientRect();
+      const [x, y, scale] = toFrame(g.left, g.top);
+      return [x, y, g.width / scale, g.height / scale];
+    }
+
+    // ---- Recognition ----------------------------------------------------------------------------
+
+    async function loop(gen) {
       let frames = 0, windowStart = performance.now(), inferenceMs = 0;
-      while (running) {
+      while (gen === generation) {
         const t0 = performance.now();
         const vector = await embedder.embed(video, guideRegion());
         const t1 = performance.now();
-        current = search(index, vector, 3);
+        if (gen !== generation) break;
+        current = smooth(t1, search(index, vector, SEARCH_K));
         inferenceMs += t1 - t0;
         frames++;
 
@@ -138,26 +285,57 @@
 
         const elapsed = performance.now() - windowStart;
         if (elapsed > 1000) {
-          stats.textContent = `${(frames * 1000 / elapsed).toFixed(1)} Bilder/s · ${(inferenceMs / frames).toFixed(0)} ms Modell · ${embedder.backend}`;
+          stats.textContent = `${(frames * 1000 / elapsed).toFixed(1)} Bilder/s · ${(inferenceMs / frames).toFixed(0)} ms Modell · ${embedder.backend} · ${focusInfo}`;
           frames = 0; inferenceMs = 0; windowStart = performance.now();
         }
         await new Promise(requestAnimationFrame);
       }
     }
 
+    // Averages the scores of the last WINDOW_MS. A variant missing from a frame's top list counts with
+    // that frame's lowest listed score (its real score is at most that), so one lucky frame cannot win.
+    function smooth(now, matches) {
+      history.push({ t: now, matches });
+      while (history[0].t < now - WINDOW_MS) history.shift();
+      const variants = new Map();
+      for (const frame of history) for (const m of frame.matches) variants.set(m.variant.id, m.variant);
+      const ranked = [...variants.values()].map((variant) => {
+        let sum = 0;
+        for (const frame of history) {
+          const hit = frame.matches.find((m) => m.variant.id === variant.id);
+          sum += hit ? hit.score : frame.matches[frame.matches.length - 1].score;
+        }
+        return { variant, score: sum / history.length };
+      });
+      return ranked.sort((a, b) => b.score - a.score).slice(0, SHOW_K);
+    }
+
+    // Rebuilds the tiles only when the ranking changes; otherwise just updates the numbers (no image flicker).
     function renderCandidates() {
-      $("candidates").replaceChildren(...current.map((match, i) => {
-        const button = document.createElement("button");
-        button.className = "candidate" + (i === 0 && streak >= STABLE_FRAMES ? " best" : "");
-        button.innerHTML = `<img src="${match.variant.url}" alt="" loading="lazy">
-          <b>${match.variant.id}</b>${escapeHtml(match.variant.name)}<br>
-          <span class="muted">${match.variant.rarity} · ${(match.score * 100).toFixed(1)} %</span>`;
-        button.addEventListener("click", () => add(match.variant));
-        return button;
-      }));
+      const box = $("candidates");
+      const ids = current.map((m) => m.variant.id).join();
+      if (ids !== shownIds) {
+        shownIds = ids;
+        box.replaceChildren(...current.map((match) => {
+          const button = document.createElement("button");
+          button.className = "candidate";
+          button.innerHTML = `<img src="${imageUrl(match.variant)}" alt="">
+            <div><b>${match.variant.id}</b><span class="name">${escapeHtml(match.variant.name)}</span><span class="score"></span></div>`;
+          button.addEventListener("click", () => add(match.variant));
+          return button;
+        }));
+      }
+      current.forEach((match, i) => {
+        const tile = box.children[i];
+        tile.classList.toggle("best", i === 0 && streak >= STABLE_FRAMES);
+        tile.querySelector(".score").textContent = `${match.variant.rarity} · ${(match.score * 100).toFixed(1)} %`;
+      });
     }
 
     $("take").addEventListener("click", () => current[0] && add(current[0].variant));
+    $("to-list").addEventListener("click", () => $("list").scrollIntoView({ behavior: "smooth" }));
+
+    // ---- Collection & export --------------------------------------------------------------------
 
     function add(variant, delta = 1) {
       const entry = collection.get(variant.id) ?? { variant, count: 0 };
@@ -170,7 +348,9 @@
 
     function renderList() {
       const entries = [...collection.values()].sort((a, b) => a.variant.id.localeCompare(b.variant.id));
-      $("count").textContent = entries.reduce((sum, e) => sum + e.count, 0);
+      const total = entries.reduce((sum, e) => sum + e.count, 0);
+      $("count").textContent = total;
+      $("hud-count").textContent = total;
       if (!entries.length) {
         $("items").textContent = "Noch nichts übernommen.";
         return;
@@ -179,7 +359,7 @@
       $("items").replaceChildren(...entries.map(({ variant, count }) => {
         const row = document.createElement("div");
         row.className = "item";
-        row.innerHTML = `<img src="${variant.url}" alt="">
+        row.innerHTML = `<img src="${imageUrl(variant)}" alt="">
           <div class="name">${escapeHtml(variant.name)}<small>${variant.id} · ${variant.rarity}</small></div>
           <button data-d="-1">−</button><b>${count}</b><button data-d="1">+</button>`;
         row.querySelectorAll("button").forEach((b) => b.addEventListener("click", () => add(variant, Number(b.dataset.d))));
@@ -208,6 +388,12 @@
       link.click();
       URL.revokeObjectURL(link.href);
     });
+
+    // gundam-gcg.com sends "Cross-Origin-Resource-Policy: same-site", so browsers refuse its images on
+    // other sites. The dev server serves the local copies from build/carddb-cache instead.
+    function imageUrl(variant) {
+      return `ref-images/${variant.file}`;
+    }
 
     function escapeHtml(text) {
       return text.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);

@@ -56,4 +56,6 @@ python pwa-spike/serve.py --https
 1. Der Server zeigt `https://<IP>:8443/` an. Diese Adresse in Chrome auf dem Handy öffnen.
 2. Die Zertifikatswarnung bestätigen (*Erweitert → Weiter*), das Zertifikat ist selbst erstellt.
 3. Falls die Seite nicht lädt: Die Windows-Firewall muss Python im privaten Netzwerk erlauben.
+   In Chrome muss außerdem die Android-Berechtigung *Geräte in der Nähe* erteilt sein, sonst
+   erreicht Chrome keine Adressen im Heimnetz (Einstellungen → Apps → Chrome → Berechtigungen).
 4. *Kamera starten*, eine Karte formatfüllend in den Rahmen halten. Grüner Rahmen = stabiler Treffer.
