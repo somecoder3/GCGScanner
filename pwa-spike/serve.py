@@ -13,6 +13,7 @@ import argparse
 import functools
 import http.server
 import json
+import shutil
 import socket
 import sqlite3
 import ssl
@@ -49,13 +50,29 @@ def lan_ips():
     return sorted(ip for ip in ips if not ip.startswith("127."))
 
 
+def find_openssl():
+    # Git for Windows ships openssl, but only Git\cmd is usually on PATH.
+    found = shutil.which("openssl")
+    if found:
+        return found
+    git = shutil.which("git")
+    roots = [Path(git).resolve().parent.parent] if git else []
+    roots.append(Path(r"C:\Program Files\Git"))
+    for root in roots:
+        for sub in ("mingw64/bin", "usr/bin"):
+            candidate = root / sub / "openssl.exe"
+            if candidate.exists():
+                return str(candidate)
+    sys.exit("openssl not found. Install Git for Windows or put openssl on PATH.")
+
+
 def ensure_certificate(ips):
     cert, key = CERT_DIR / "cert.pem", CERT_DIR / "key.pem"
-    if not cert.exists():
+    if not (cert.exists() and key.exists()):
         CERT_DIR.mkdir(parents=True, exist_ok=True)
         san = ",".join(["DNS:localhost", "IP:127.0.0.1"] + [f"IP:{ip}" for ip in ips])
         subprocess.run(
-            ["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "825",
+            [find_openssl(), "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "825",
              "-keyout", str(key), "-out", str(cert), "-subj", "/CN=GCGScanner dev",
              "-addext", f"subjectAltName={san}"],
             check=True,
@@ -76,6 +93,23 @@ class Handler(http.server.SimpleHTTPRequestHandler):
     def __init__(self, *args, variant_ids, **kwargs):
         self.variant_ids = variant_ids
         super().__init__(*args, directory=str(SPIKE_DIR), **kwargs)
+
+    def setup(self):
+        # The TLS handshake runs here, in the request thread, so a silent client cannot block
+        # the accept loop and failures show up in the log instead of being dropped.
+        self.handshake_failed = False
+        if isinstance(self.request, ssl.SSLSocket):
+            self.request.settimeout(10)
+            try:
+                self.request.do_handshake()
+            except OSError as error:
+                self.log_message("TLS handshake failed: %s", error)
+                self.handshake_failed = True
+        super().setup()
+
+    def handle(self):
+        if not self.handshake_failed:
+            super().handle()
 
     def end_headers(self):
         # Cross-origin isolation enables multi-threaded WebAssembly; "credentialless" still
@@ -130,7 +164,7 @@ def main():
         server = http.server.ThreadingHTTPServer(("0.0.0.0", args.port or 8443), handler)
         context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
         context.load_cert_chain(*ensure_certificate(ips))
-        server.socket = context.wrap_socket(server.socket, server_side=True)
+        server.socket = context.wrap_socket(server.socket, server_side=True, do_handshake_on_connect=False)
         for ip in ips:
             print(f"Open on your phone: https://{ip}:{server.server_port}/")
     else:

@@ -22,10 +22,10 @@ FILES = [
     "ort.wasm.min.mjs",
     "ort-wasm-simd-threaded.mjs",
     "ort-wasm-simd-threaded.wasm",
-    # WebGPU backend
+    # WebGPU backend (since 1.2x it loads the asyncify build, not jsep)
     "ort.webgpu.min.mjs",
-    "ort-wasm-simd-threaded.jsep.mjs",
-    "ort-wasm-simd-threaded.jsep.wasm",
+    "ort-wasm-simd-threaded.asyncify.mjs",
+    "ort-wasm-simd-threaded.asyncify.wasm",
 ]
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
