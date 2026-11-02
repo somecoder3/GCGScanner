@@ -1,0 +1,48 @@
+:root {
+  --bg: #111418;
+  --panel: #1c2128;
+  --text: #e8eaed;
+  --muted: #9aa3ad;
+  --accent: #4fc3f7;
+  --ok: #66bb6a;
+  --warn: #ffb74d;
+  --bad: #ef5350;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  padding: 16px;
+  background: var(--bg);
+  color: var(--text);
+  font: 15px/1.4 system-ui, sans-serif;
+}
+
+h1 { font-size: 20px; margin: 0 0 12px; }
+h2 { font-size: 16px; margin: 20px 0 8px; }
+a { color: var(--accent); }
+.muted { color: var(--muted); }
+
+button, select {
+  font: inherit;
+  color: var(--text);
+  background: var(--panel);
+  border: 1px solid #3a424d;
+  border-radius: 8px;
+  padding: 8px 14px;
+}
+button.primary { background: var(--accent); color: #000; border-color: var(--accent); }
+button:disabled { opacity: 0.5; }
+
+.row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.panel { background: var(--panel); border-radius: 10px; padding: 12px; margin: 12px 0; }
+pre { white-space: pre-wrap; word-break: break-word; font-size: 12px; }
+progress { width: 100%; }
+
+.thumbs { display: flex; flex-wrap: wrap; gap: 8px; }
+.thumbs figure { margin: 0; width: 110px; font-size: 11px; }
+.thumbs img, .thumbs canvas { width: 110px; border-radius: 4px; display: block; }
+.thumbs .ok { color: var(--ok); }
+.thumbs .bad { color: var(--bad); }

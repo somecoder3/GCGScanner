@@ -1,0 +1,217 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#111418">
+  <title>GCG Scanner – Test</title>
+  <link rel="stylesheet" href="css/style.css">
+  <style>
+    body { padding: 8px 16px 16px; }
+    .viewer { position: relative; width: 100%; max-width: 640px; margin: 0 auto; background: #000; border-radius: 10px; overflow: hidden; }
+    .viewer video { display: block; width: 100%; height: auto; }
+    /* Card guide: 63 x 88 mm aspect, centred. The same percentages are used to crop the frame. */
+    .guide {
+      position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+      height: 82%; aspect-ratio: 63 / 88;
+      border: 3px solid var(--warn); border-radius: 10px;
+      box-shadow: 0 0 0 100vmax rgba(0, 0, 0, 0.45);
+      transition: border-color 0.15s;
+    }
+    .guide.stable { border-color: var(--ok); }
+    .stats { position: absolute; left: 8px; top: 6px; font-size: 12px; color: #fff; text-shadow: 0 0 3px #000; }
+    .candidates { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; max-width: 640px; margin: 10px auto; }
+    .candidate { background: var(--panel); border: 2px solid transparent; border-radius: 8px; padding: 6px; font-size: 12px; text-align: left; }
+    .candidate.best { border-color: var(--ok); }
+    .candidate img { width: 100%; border-radius: 4px; display: block; margin-bottom: 4px; }
+    .candidate b { display: block; }
+    .list { max-width: 640px; margin: 0 auto; }
+    .item { display: flex; gap: 10px; align-items: center; padding: 6px 0; border-bottom: 1px solid #2a3038; }
+    .item img { width: 44px; border-radius: 3px; }
+    .item .name { flex: 1; min-width: 0; }
+    .item .name small { display: block; color: var(--muted); }
+    .item button { padding: 4px 10px; }
+    .controls { max-width: 640px; margin: 0 auto 10px; justify-content: space-between; }
+  </style>
+</head>
+<body>
+  <div class="row controls">
+    <h1 style="margin:0">GCG Scanner <span class="muted" style="font-size:13px">Machbarkeitstest</span></h1>
+    <label class="muted">Backend <select id="backend"><option>wasm</option><option>webgpu</option></select></label>
+  </div>
+
+  <div class="viewer" id="viewer">
+    <video id="video" playsinline muted></video>
+    <div class="guide" id="guide"></div>
+    <div class="stats" id="stats">Lade …</div>
+  </div>
+
+  <div class="row controls" style="margin-top:10px">
+    <button id="camera" class="primary">Kamera starten</button>
+    <button id="take" disabled>Beste übernehmen</button>
+  </div>
+
+  <div class="candidates" id="candidates"></div>
+
+  <div class="list">
+    <div class="row" style="justify-content: space-between">
+      <h2>Erkannte Karten (<span id="count">0</span>)</h2>
+      <div class="row">
+        <button id="copy">CSV kopieren</button>
+        <button id="download">CSV speichern</button>
+      </div>
+    </div>
+    <div id="items" class="muted">Noch nichts übernommen. Karte in den Rahmen halten, dann einen Treffer antippen.</div>
+  </div>
+
+  <script type="module">
+    import { createEmbedder } from "./js/embedder.js";
+    import { loadIndex, search } from "./js/matcher.js";
+
+    const $ = (id) => document.getElementById(id);
+    const video = $("video");
+    const guide = $("guide");
+    const stats = $("stats");
+    const params = new URLSearchParams(location.search);
+    const backend = params.get("backend") ?? "wasm";
+    $("backend").value = backend;
+    $("backend").addEventListener("change", (e) => {
+      params.set("backend", e.target.value);
+      location.search = params;
+    });
+
+    // A match counts as stable once the same variant wins this many frames in a row.
+    const STABLE_FRAMES = 3;
+    const collection = new Map(); // exburst id -> { variant, count }
+    let index, embedder, running = false, lastBest = null, streak = 0, current = [];
+
+    try {
+      [index, embedder] = await Promise.all([loadIndex(), createEmbedder({ backend })]);
+      stats.textContent = `${index.variants.length} Varianten · ${embedder.backend} · ${embedder.threads} Threads`;
+    } catch (error) {
+      stats.textContent = `Fehler: ${error.message}`;
+      $("camera").disabled = true;
+    }
+
+    $("camera").addEventListener("click", async () => {
+      if (running) return;
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          audio: false,
+          video: { facingMode: { ideal: "environment" }, width: { ideal: 1920 }, height: { ideal: 1080 } },
+        });
+        video.srcObject = stream;
+        await video.play();
+        running = true;
+        $("camera").disabled = true;
+        loop();
+      } catch (error) {
+        stats.textContent = `Kamera nicht verfügbar: ${error.message}`;
+      }
+    });
+
+    // Maps the on-screen guide rectangle to pixels of the camera frame.
+    function guideRegion() {
+      const v = video.getBoundingClientRect();
+      const g = guide.getBoundingClientRect();
+      const sx = video.videoWidth / v.width;
+      const sy = video.videoHeight / v.height;
+      return [(g.left - v.left) * sx, (g.top - v.top) * sy, g.width * sx, g.height * sy];
+    }
+
+    async function loop() {
+      let frames = 0, windowStart = performance.now(), inferenceMs = 0;
+      while (running) {
+        const t0 = performance.now();
+        const vector = await embedder.embed(video, guideRegion());
+        const t1 = performance.now();
+        current = search(index, vector, 3);
+        inferenceMs += t1 - t0;
+        frames++;
+
+        const best = current[0];
+        streak = best.variant.id === lastBest ? streak + 1 : 1;
+        lastBest = best.variant.id;
+        guide.classList.toggle("stable", streak >= STABLE_FRAMES);
+        $("take").disabled = streak < STABLE_FRAMES;
+        renderCandidates();
+
+        const elapsed = performance.now() - windowStart;
+        if (elapsed > 1000) {
+          stats.textContent = `${(frames * 1000 / elapsed).toFixed(1)} Bilder/s · ${(inferenceMs / frames).toFixed(0)} ms Modell · ${embedder.backend}`;
+          frames = 0; inferenceMs = 0; windowStart = performance.now();
+        }
+        await new Promise(requestAnimationFrame);
+      }
+    }
+
+    function renderCandidates() {
+      $("candidates").replaceChildren(...current.map((match, i) => {
+        const button = document.createElement("button");
+        button.className = "candidate" + (i === 0 && streak >= STABLE_FRAMES ? " best" : "");
+        button.innerHTML = `<img src="${match.variant.url}" alt="" loading="lazy">
+          <b>${match.variant.id}</b>${escapeHtml(match.variant.name)}<br>
+          <span class="muted">${match.variant.rarity} · ${(match.score * 100).toFixed(1)} %</span>`;
+        button.addEventListener("click", () => add(match.variant));
+        return button;
+      }));
+    }
+
+    $("take").addEventListener("click", () => current[0] && add(current[0].variant));
+
+    function add(variant, delta = 1) {
+      const entry = collection.get(variant.id) ?? { variant, count: 0 };
+      entry.count += delta;
+      if (entry.count <= 0) collection.delete(variant.id);
+      else collection.set(variant.id, entry);
+      renderList();
+      navigator.vibrate?.(30);
+    }
+
+    function renderList() {
+      const entries = [...collection.values()].sort((a, b) => a.variant.id.localeCompare(b.variant.id));
+      $("count").textContent = entries.reduce((sum, e) => sum + e.count, 0);
+      if (!entries.length) {
+        $("items").textContent = "Noch nichts übernommen.";
+        return;
+      }
+      $("items").classList.remove("muted");
+      $("items").replaceChildren(...entries.map(({ variant, count }) => {
+        const row = document.createElement("div");
+        row.className = "item";
+        row.innerHTML = `<img src="${variant.url}" alt="">
+          <div class="name">${escapeHtml(variant.name)}<small>${variant.id} · ${variant.rarity}</small></div>
+          <button data-d="-1">−</button><b>${count}</b><button data-d="1">+</button>`;
+        row.querySelectorAll("button").forEach((b) => b.addEventListener("click", () => add(variant, Number(b.dataset.d))));
+        return row;
+      }));
+    }
+
+    function csv() {
+      const lines = ["Card No,Owned,Wanted,Trading,Tags"];
+      for (const { variant, count } of [...collection.values()].sort((a, b) => a.variant.id.localeCompare(b.variant.id))) {
+        lines.push(`${variant.id},${count},0,0,`);
+      }
+      return lines.join("\n") + "\n";
+    }
+
+    $("copy").addEventListener("click", async () => {
+      await navigator.clipboard.writeText(csv());
+      $("copy").textContent = "Kopiert ✓";
+      setTimeout(() => ($("copy").textContent = "CSV kopieren"), 1500);
+    });
+
+    $("download").addEventListener("click", () => {
+      const link = document.createElement("a");
+      link.href = URL.createObjectURL(new Blob([csv()], { type: "text/csv" }));
+      link.download = `gcg-scan-${new Date().toISOString().slice(0, 10)}.csv`;
+      link.click();
+      URL.revokeObjectURL(link.href);
+    });
+
+    function escapeHtml(text) {
+      return text.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+    }
+  </script>
+</body>
+</html>

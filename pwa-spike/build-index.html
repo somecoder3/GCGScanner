@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Referenz-Index bauen</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <h1>Referenz-Index bauen</h1>
+  <p class="muted">Berechnet für jede Kartenvariante den Merkmalsvektor aus dem lokalen Bild und speichert
+    ihn über den Dev-Server in <code>data/embeddings.bin</code>. Nur am PC nötig, nach jeder neuen Kartendatenbank.</p>
+  <div class="row">
+    <label>Backend <select id="backend"><option>wasm</option><option>webgpu</option></select></label>
+    <button id="start" class="primary">Start</button>
+  </div>
+  <div class="panel">
+    <progress id="progress" value="0" max="1"></progress>
+    <pre id="status">Bereit.</pre>
+  </div>
+
+  <script type="module">
+    import { createEmbedder, loadImage } from "./js/embedder.js";
+
+    const status = document.getElementById("status");
+    const progress = document.getElementById("progress");
+
+    document.getElementById("start").addEventListener("click", async (event) => {
+      event.target.disabled = true;
+      try {
+        const variants = await fetch("data/variants.json").then((r) => r.json());
+        const embedder = await createEmbedder({ backend: document.getElementById("backend").value });
+        status.textContent = `Modell geladen (${embedder.backend}, ${embedder.threads} Threads).`;
+        progress.max = variants.length;
+
+        const started = performance.now();
+        let vectors = null;
+        for (const [i, variant] of variants.entries()) {
+          const image = await loadImage(`ref-images/${variant.file}`);
+          const vector = await embedder.embed(image);
+          vectors ??= new Float32Array(variants.length * vector.length);
+          vectors.set(vector, i * vector.length);
+          if (i % 25 === 0 || i === variants.length - 1) {
+            progress.value = i + 1;
+            const ms = (performance.now() - started) / (i + 1);
+            status.textContent = `${i + 1}/${variants.length} – ${ms.toFixed(1)} ms pro Karte`;
+          }
+        }
+        const response = await fetch("api/index", { method: "POST", body: vectors.buffer });
+        if (!response.ok) throw new Error(`Speichern fehlgeschlagen: ${response.status} ${response.statusText}`);
+        const seconds = ((performance.now() - started) / 1000).toFixed(0);
+        status.textContent += `\nFertig nach ${seconds} s, ${(vectors.byteLength / 1e6).toFixed(1)} MB gespeichert.`;
+        status.dataset.done = "true";
+      } catch (error) {
+        status.textContent = `Fehler: ${error.message}`;
+        status.dataset.done = "error";
+        event.target.disabled = false;
+      }
+    });
+  </script>
+</body>
+</html>

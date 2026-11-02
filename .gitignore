@@ -1,2 +1,10 @@
 /build/
 __pycache__/
+
+# PWA spike: generated or downloaded, see pwa-spike/README.md
+/pwa-spike/data/
+/pwa-spike/model/
+/pwa-spike/vendor/
+
+# Local archive of build/ for moving between machines
+/build.zip

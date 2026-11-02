@@ -1,0 +1,188 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Erkennung messen</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <h1>Erkennung messen</h1>
+  <p class="muted">Simuliert Kamerabilder aus den Referenzbildern (Drehung, Versatz, Unschärfe, Licht, Reflex,
+    JPEG) und schneidet sie wie der Scanner über den Kartenrahmen aus. Nur am PC über den Dev-Server.</p>
+  <div class="row">
+    <label>Backend <select id="backend"><option>wasm</option><option>webgpu</option></select></label>
+    <label>Bilder pro Stufe <select id="count"><option>100</option><option selected>300</option><option>1000</option></select></label>
+    <button id="start" class="primary">Start</button>
+  </div>
+  <div class="panel"><pre id="status">Bereit.</pre></div>
+  <h2>Beispiele „schwer“ (simuliertes Kamerabild → bester Treffer)</h2>
+  <div class="thumbs" id="examples"></div>
+  <h2>Fehler</h2>
+  <div class="thumbs" id="failures"></div>
+
+  <script type="module">
+    import { createEmbedder, loadImage } from "./js/embedder.js";
+    import { loadIndex, search } from "./js/matcher.js";
+
+    // Simulated camera frame and the scanner's guide box (82 % of the height, card aspect, centred).
+    const FRAME_W = 720, FRAME_H = 960;
+    const GUIDE_H = FRAME_H * 0.82, GUIDE_W = GUIDE_H * 63 / 88;
+    const GUIDE = [(FRAME_W - GUIDE_W) / 2, (FRAME_H - GUIDE_H) / 2, GUIDE_W, GUIDE_H];
+
+    const LEVELS = {
+      sauber: { scale: [1, 1], shift: 0, rotate: 0, shear: 0, blur: [0, 0], light: [1, 1], contrast: [1, 1], glare: 0, tint: 0, jpeg: 0 },
+      normal: { scale: [0.9, 1], shift: 0.03, rotate: 4, shear: 0.02, blur: [0, 1], light: [0.75, 1.2], contrast: [0.8, 1.1], glare: 0.3, tint: 0.1, jpeg: 0.8 },
+      schwer: { scale: [0.82, 1.02], shift: 0.06, rotate: 9, shear: 0.05, blur: [0.5, 2.5], light: [0.55, 1.35], contrast: [0.65, 1.2], glare: 0.7, tint: 0.2, jpeg: 0.6 },
+    };
+
+    const $ = (id) => document.getElementById(id);
+    const status = $("status");
+
+    const LOOK_ALIKE = 0.95;
+    function similarity({ variants, dim, vectors }, a, b) {
+      const ia = variants.indexOf(a) * dim, ib = variants.indexOf(b) * dim;
+      let dot = 0;
+      for (let i = 0; i < dim; i++) dot += vectors[ia + i] * vectors[ib + i];
+      return dot;
+    }
+
+    function mulberry32(seed) {
+      return () => {
+        seed |= 0; seed = (seed + 0x6d2b79f5) | 0;
+        let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+        t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+      };
+    }
+
+    async function simulate(image, level, rand) {
+      const range = ([a, b]) => a + (b - a) * rand();
+      const canvas = new OffscreenCanvas(FRAME_W, FRAME_H);
+      const ctx = canvas.getContext("2d");
+      // table-like background
+      const hue = Math.floor(rand() * 360);
+      const bg = ctx.createLinearGradient(0, 0, FRAME_W, FRAME_H);
+      bg.addColorStop(0, `hsl(${hue} 15% ${15 + rand() * 50}%)`);
+      bg.addColorStop(1, `hsl(${hue} 15% ${15 + rand() * 50}%)`);
+      ctx.fillStyle = bg;
+      ctx.fillRect(0, 0, FRAME_W, FRAME_H);
+
+      const scale = range(level.scale);
+      const w = GUIDE_W * scale, h = GUIDE_H * scale;
+      const cx = FRAME_W / 2 + (rand() * 2 - 1) * level.shift * GUIDE_W;
+      const cy = FRAME_H / 2 + (rand() * 2 - 1) * level.shift * GUIDE_H;
+      ctx.save();
+      ctx.filter = `brightness(${range(level.light)}) contrast(${range(level.contrast)}) blur(${range(level.blur)}px)`;
+      ctx.translate(cx, cy);
+      ctx.rotate(((rand() * 2 - 1) * level.rotate * Math.PI) / 180);
+      ctx.transform(1, (rand() * 2 - 1) * level.shear, (rand() * 2 - 1) * level.shear, 1, 0, 0);
+      ctx.drawImage(image, -w / 2, -h / 2, w, h);
+      ctx.restore();
+
+      if (rand() < level.glare) {
+        const gx = cx + (rand() - 0.5) * w, gy = cy + (rand() - 0.5) * h, r = w * (0.15 + rand() * 0.25);
+        const glare = ctx.createRadialGradient(gx, gy, 0, gx, gy, r);
+        glare.addColorStop(0, `rgba(255,255,255,${0.35 + rand() * 0.4})`);
+        glare.addColorStop(1, "rgba(255,255,255,0)");
+        ctx.fillStyle = glare;
+        ctx.fillRect(0, 0, FRAME_W, FRAME_H);
+      }
+      if (level.tint) {
+        ctx.globalCompositeOperation = "soft-light";
+        ctx.fillStyle = rand() < 0.5 ? `rgba(255,170,60,${level.tint})` : `rgba(80,140,255,${level.tint})`;
+        ctx.fillRect(0, 0, FRAME_W, FRAME_H);
+        ctx.globalCompositeOperation = "source-over";
+      }
+      if (!level.jpeg) return canvas;
+      const blob = await canvas.convertToBlob({ type: "image/jpeg", quality: level.jpeg });
+      return createImageBitmap(blob);
+    }
+
+    function figure(source, caption, className) {
+      const fig = document.createElement("figure");
+      if (source instanceof HTMLImageElement || typeof source === "string") {
+        const img = document.createElement("img");
+        img.src = typeof source === "string" ? source : source.src;
+        fig.append(img);
+      } else {
+        const canvas = document.createElement("canvas");
+        canvas.width = GUIDE_W / 3; canvas.height = GUIDE_H / 3;
+        canvas.getContext("2d").drawImage(source, ...GUIDE, 0, 0, canvas.width, canvas.height);
+        fig.append(canvas);
+      }
+      fig.insertAdjacentHTML("beforeend", `<figcaption class="${className ?? ""}">${caption}</figcaption>`);
+      return fig;
+    }
+
+    $("start").addEventListener("click", async (event) => {
+      event.target.disabled = true;
+      $("examples").replaceChildren();
+      $("failures").replaceChildren();
+      try {
+        const [index, embedder] = await Promise.all([loadIndex(), createEmbedder({ backend: $("backend").value })]);
+        const perLevel = Number($("count").value);
+        const results = { backend: embedder.backend, threads: embedder.threads, variants: index.variants.length, levels: {} };
+
+        // Reference images that are (almost) identical can never be told apart by image alone.
+        let duplicates = 0;
+        const { dim, vectors } = index;
+        for (let a = 0; a < index.variants.length; a++) {
+          for (let b = a + 1; b < index.variants.length; b++) {
+            let dot = 0;
+            for (let i = 0; i < dim; i++) dot += vectors[a * dim + i] * vectors[b * dim + i];
+            if (dot > 0.98 && index.variants[a].cardNo !== index.variants[b].cardNo) duplicates++;
+          }
+        }
+        results.nearDuplicatePairsAcrossCardNumbers = duplicates;
+
+        for (const [name, level] of Object.entries(LEVELS)) {
+          const rand = mulberry32(42);
+          const stat = { n: 0, top1: 0, top5: 0, cardTop1: 0, altMixup: 0, lookAlike: 0, ms: 0 };
+          for (let n = 0; n < perLevel; n++) {
+            const variant = index.variants[Math.floor(rand() * index.variants.length)];
+            const image = await loadImage(`ref-images/${variant.file}`);
+            const frame = await simulate(image, level, rand);
+            const t0 = performance.now();
+            const matches = search(index, await embedder.embed(frame, GUIDE), 5);
+            stat.ms += performance.now() - t0;
+            stat.n++;
+            const best = matches[0].variant;
+            const hit = best.id === variant.id;
+            stat.top1 += hit;
+            stat.top5 += matches.some((m) => m.variant.id === variant.id);
+            stat.cardTop1 += best.cardNo === variant.cardNo;
+            stat.altMixup += !hit && best.cardNo === variant.cardNo;
+            // Reprints of the same artwork (e.g. Deck Build Box, Edition Beta) differ only in tiny marks.
+            stat.lookAlike += hit || (best.cardNo === variant.cardNo && similarity(index, best, variant) >= LOOK_ALIKE);
+            if (name === "schwer" && n < 8) {
+              $("examples").append(figure(frame, `${variant.id}`), figure(best.url, `→ ${best.id} ${(matches[0].score * 100).toFixed(0)} %`, hit ? "ok" : "bad"));
+            }
+            if (!hit && $("failures").children.length < 24) {
+              $("failures").append(figure(frame, `${name}: ${variant.id}`), figure(best.url, `→ ${best.id}`, "bad"));
+            }
+            if (n % 20 === 0) status.textContent = `${name}: ${n}/${perLevel} …`;
+          }
+          const pct = (x) => `${((x / stat.n) * 100).toFixed(1)} %`;
+          results.levels[name] = {
+            n: stat.n,
+            "Variante Top-1": pct(stat.top1),
+            "Variante Top-5": pct(stat.top5),
+            "Kartennummer Top-1": pct(stat.cardTop1),
+            "Nur Alt Art verwechselt": pct(stat.altMixup),
+            "Richtig oder optisch gleiche Variante": pct(stat.lookAlike),
+            "ms pro Bild (Modell + Suche)": +(stat.ms / stat.n).toFixed(1),
+          };
+        }
+        status.textContent = JSON.stringify(results, null, 2);
+        status.dataset.done = "true";
+        fetch("api/eval-result", { method: "POST", body: status.textContent }).catch(() => {});
+      } catch (error) {
+        status.textContent = `Fehler: ${error.message}\n${error.stack}`;
+        status.dataset.done = "error";
+      }
+      event.target.disabled = false;
+    });
+  </script>
+</body>
+</html>
