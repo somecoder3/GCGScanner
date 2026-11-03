@@ -1,0 +1,152 @@
+{
+  "format": "gcg-images-1",
+  "width": 300,
+  "kdf": {
+    "name": "PBKDF2-SHA256",
+    "iterations": 600000,
+    "salt": "jpvIzf0aYa7PH63HI9hW5A=="
+  },
+  "check": "jeyw+ZDA+YC74JKxGjoEw4A2qcOf1LGm3CFZIjd7iGGBfzPJ0fZolZFWoDu+LAMwTsDd5Fzh",
+  "packs": [
+    {
+      "name": "EB01",
+      "file": "EB01.a62a16043427760f.bin",
+      "count": 106
+    },
+    {
+      "name": "EXB",
+      "file": "EXB.852dfc431f9179e0.bin",
+      "count": 6
+    },
+    {
+      "name": "EXBP",
+      "file": "EXBP.1d3bc147e791d214.bin",
+      "count": 27
+    },
+    {
+      "name": "EXR",
+      "file": "EXR.fc1e0c6a8b28f69a.bin",
+      "count": 14
+    },
+    {
+      "name": "EXRP",
+      "file": "EXRP.bcef9f0106531bbb.bin",
+      "count": 18
+    },
+    {
+      "name": "GD01",
+      "file": "GD01.b226fa980295c146.bin",
+      "count": 271
+    },
+    {
+      "name": "GD02",
+      "file": "GD02.6dff512f53494dd8.bin",
+      "count": 210
+    },
+    {
+      "name": "GD03",
+      "file": "GD03.0b54d52b16a018c3.bin",
+      "count": 213
+    },
+    {
+      "name": "GD04",
+      "file": "GD04.bcfb8a2a0a699191.bin",
+      "count": 180
+    },
+    {
+      "name": "GD05",
+      "file": "GD05.305a0ef601fe8aea.bin",
+      "count": 202
+    },
+    {
+      "name": "GD06",
+      "file": "GD06.f55f1c7e732c57c1.bin",
+      "count": 178
+    },
+    {
+      "name": "R",
+      "file": "R.a533a3296f3d1b32.bin",
+      "count": 87
+    },
+    {
+      "name": "RP",
+      "file": "RP.84d7db413cd888d7.bin",
+      "count": 68
+    },
+    {
+      "name": "ST01",
+      "file": "ST01.d1aa583669d314fb.bin",
+      "count": 62
+    },
+    {
+      "name": "ST02",
+      "file": "ST02.d989a2f3c9c8e6bc.bin",
+      "count": 50
+    },
+    {
+      "name": "ST03",
+      "file": "ST03.2ae46ca4641e19a9.bin",
+      "count": 55
+    },
+    {
+      "name": "ST04",
+      "file": "ST04.c388c3e6c19298c9.bin",
+      "count": 58
+    },
+    {
+      "name": "ST05",
+      "file": "ST05.ecbcb0111c2e4a02.bin",
+      "count": 46
+    },
+    {
+      "name": "ST06",
+      "file": "ST06.7396a62cfcde81ee.bin",
+      "count": 40
+    },
+    {
+      "name": "ST07",
+      "file": "ST07.96a0ab0d884d1700.bin",
+      "count": 40
+    },
+    {
+      "name": "ST08",
+      "file": "ST08.f70d7b629c8f0af0.bin",
+      "count": 33
+    },
+    {
+      "name": "ST09",
+      "file": "ST09.d56f32a7abb47148.bin",
+      "count": 22
+    },
+    {
+      "name": "ST10",
+      "file": "ST10.e27772d25d330ac3.bin",
+      "count": 33
+    },
+    {
+      "name": "ST11",
+      "file": "ST11.e43887f282e1c7f9.bin",
+      "count": 34
+    },
+    {
+      "name": "ST12",
+      "file": "ST12.03c34159dae781d9.bin",
+      "count": 34
+    },
+    {
+      "name": "ST13",
+      "file": "ST13.53ceff9ac5485b97.bin",
+      "count": 32
+    },
+    {
+      "name": "ST14",
+      "file": "ST14.f22e7ee3294bb0b0.bin",
+      "count": 32
+    },
+    {
+      "name": "T",
+      "file": "T.4408fe05a55c7b95.bin",
+      "count": 54
+    }
+  ]
+}
