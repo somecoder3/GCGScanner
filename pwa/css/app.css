@@ -10,7 +10,12 @@ body { padding: 0; overscroll-behavior: none; }
 .update { font-size: 13px; color: var(--warn); }
 button.link { padding: 0; border: 0; background: none; color: var(--accent); text-decoration: underline; }
 button.icon { width: 40px; height: 40px; padding: 0; font-size: 26px; line-height: 1; flex: none; }
-button.wide { width: 100%; margin-top: 8px; }
+button.wide, a.wide { width: 100%; margin-top: 8px; }
+/* Link that looks like a button (opens ExBurst in the browser). */
+a.button {
+  display: block; text-align: center; text-decoration: none;
+  color: var(--text); background: var(--panel); border: 1px solid #3a424d; border-radius: 8px; padding: 8px 14px;
+}
 button.danger { border-color: var(--bad); color: var(--bad); }
 
 /* ---- Scanner -------------------------------------------------------------------------------- */

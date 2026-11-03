@@ -21,6 +21,8 @@ Der Nutzer kommt aus der Webentwicklung.
   (`.github/workflows/pages.yml`). Details und Abläufe: `pwa/README.md`.
   - Scanner (eine Karte im Rahmen) → *Fertig* → Übersicht `#liste` mit Bildern, Mengen,
     **Variantenauswahl** und CSV teilen/kopieren/speichern. Liste bleibt in `localStorage`.
+  - ExBurst-Import vorerst von Hand: Button *ExBurst-Collection öffnen* → `https://exburst.dev/gundam/collection/sets`
+    (vom Nutzer genannt), dort die kopierte CSV einfügen.
   - Offline-fähig über Service Worker. **Kartenbilder aus verschlüsselten Paketen** (`pwa/images/`,
     Passwort nur beim Nutzer), siehe „Kartenbilder“ unten. Die ExBurst-CDN geht wegen Hotlink-Schutz nicht.
   - Seit 3. Nov. live auf `https://somecoder3.github.io/GCGScanner/` und am Handy benutzt. Die
@@ -28,7 +30,8 @@ Der Nutzer kommt aus der Webentwicklung.
     Am Handy laut Nutzer „sieht gut aus“.
 - Vorher (2. Nov.): Machbarkeitstest am Handy (Android, Chrome): **WebGPU ~19 Bilder/s bei ~45 ms
   Modell**, wasm unter 10 Bilder/s bei über 100 ms. Erkennung laut Nutzer „ganz gut, auch mit Sleeves“.
-- Noch nicht umgesetzt: mehrere Karten gleichzeitig, Preise, ExBurst-Login/Direktimport.
+- Noch nicht umgesetzt: mehrere Karten gleichzeitig (nächster Schritt), Preise (laut Nutzer zuletzt,
+  „nettes Gimmick“), ExBurst-Login/Direktimport (vorerst nicht nötig, Button reicht).
 
 ## Fakten, die schon geprüft sind
 
@@ -226,7 +229,6 @@ steht sie im Server-Log, auch ein abgelehntes Zertifikat (`TLS handshake failed`
   Token-Schutz einen kleinen Proxy (z. B. einen Cloudflare Worker).
 - ExBurst-Login und Import: keine offizielle API bekannt. Lieber die ExBurst-Entwickler fragen, statt
   die interne API nachzubauen. Aus einer PWA ginge es ebenfalls nur über einen Proxy.
-- Den genauen Menüpfad des ExBurst-Collection-Imports hat Claude nicht geprüft.
 
 ## Konventionen
 

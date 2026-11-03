@@ -5,7 +5,8 @@ sie im ExBurst-Importformat. Läuft komplett im Browser und nach dem ersten Lade
 
 Ablauf in der App: Kamera starten → Karte in den Rahmen halten → grüner Rahmen → *Übernehmen*
 (oder auf den Treffer tippen) → *Fertig* → Varianten prüfen, Mengen anpassen → *CSV teilen /
-kopieren / speichern* → in ExBurst in die Collection importieren.
+kopieren / speichern* → *ExBurst-Collection öffnen* (exburst.dev/gundam/collection/sets) und dort beim
+Import einfügen.
 
 ## Aufbau
 

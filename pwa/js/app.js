@@ -505,7 +505,7 @@ $("share").addEventListener("click", async () => {
 $("copy").addEventListener("click", async () => {
   try {
     await navigator.clipboard.writeText(collection.csv());
-    toast("CSV kopiert – in ExBurst beim Collection-Import einfügen");
+    toast("CSV kopiert – jetzt ExBurst öffnen und beim Import einfügen");
   } catch (error) {
     toast(`Kopieren fehlgeschlagen: ${error.message}`);
   }
