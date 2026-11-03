@@ -24,7 +24,8 @@ Der Nutzer kommt aus der Webentwicklung.
   - Offline-fähig über Service Worker. **Kartenbilder aus verschlüsselten Paketen** (`pwa/images/`,
     Passwort nur beim Nutzer), siehe „Kartenbilder“ unten. Die ExBurst-CDN geht wegen Hotlink-Schutz nicht.
   - Seit 3. Nov. live auf `https://somecoder3.github.io/GCGScanner/` und am Handy benutzt. Die
-    Bildpakete muss der Nutzer mit seinem Passwort selbst bauen und committen (Stand: noch offen).
+    Bildpakete hat der Nutzer mit seinem Passwort gebaut (Commit `819eb8f`, 28 Pakete, 2205 Bilder).
+    Am Handy laut Nutzer „sieht gut aus“.
 - Vorher (2. Nov.): Machbarkeitstest am Handy (Android, Chrome): **WebGPU ~19 Bilder/s bei ~45 ms
   Modell**, wasm unter 10 Bilder/s bei über 100 ms. Erkennung laut Nutzer „ganz gut, auch mit Sleeves“.
 - Noch nicht umgesetzt: mehrere Karten gleichzeitig, Preise, ExBurst-Login/Direktimport.
