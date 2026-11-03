@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Bildpakete bauen</title>
+  <link rel="stylesheet" href="../css/style.css">
+</head>
+<body>
+  <h1>Bildpakete bauen</h1>
+  <p class="muted">Verkleinert die lokalen Kartenbilder, packt sie pro Set und verschlüsselt sie mit dem Passwort
+    nach <code>pwa/images/</code>. Pakete mit unverändertem Inhalt bleiben, wie sie sind (kein Git-Zuwachs).
+    Danach <code>pwa/images/</code> committen. Das Passwort wird nirgends gespeichert.</p>
+  <div class="panel">
+    <div class="row">
+      <label>Passwort <input id="pass1" type="password" autocomplete="new-password"></label>
+      <label>Wiederholen <input id="pass2" type="password" autocomplete="new-password"></label>
+    </div>
+    <p class="row"><label><input id="rekey" type="checkbox"> Neues Passwort festlegen (alle Pakete neu verschlüsseln)</label></p>
+    <button id="start" class="primary">Start</button>
+  </div>
+  <div class="panel">
+    <progress id="progress" value="0" max="1"></progress>
+    <pre id="status">Bereit.</pre>
+  </div>
+
+  <script type="module">
+    import { deriveKey, encrypt, decrypt, pack, unpack, makeCheck, keyMatches, toBase64, fromBase64, fetchManifest } from "../js/imagepack.js";
+    import { loadImage } from "../js/embedder.js";
+
+    // 300 px wide is sharp for the thumbnails and the variant picker at phone pixel densities.
+    const WIDTH = 300;
+    const QUALITY = 0.8;
+    const ITERATIONS = 600000;
+
+    const $ = (id) => document.getElementById(id);
+    const status = $("status");
+    const progress = $("progress");
+    const log = (line) => (status.textContent += `\n${line}`);
+
+    async function post(name, body) {
+      const response = await fetch(`/api/images/file?name=${encodeURIComponent(name)}`, { method: "POST", body });
+      if (!response.ok) throw new Error(`Speichern von ${name} fehlgeschlagen: ${response.status}`);
+    }
+
+    async function sha16(bytes) {
+      const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));
+      return [...digest.slice(0, 8)].map((b) => b.toString(16).padStart(2, "0")).join("");
+    }
+
+    async function shrink(image) {
+      const height = Math.round(WIDTH * image.naturalHeight / image.naturalWidth);
+      const canvas = new OffscreenCanvas(WIDTH, height);
+      const ctx = canvas.getContext("2d");
+      ctx.imageSmoothingQuality = "high";
+      ctx.drawImage(image, 0, 0, WIDTH, height);
+      return new Uint8Array(await (await canvas.convertToBlob({ type: "image/webp", quality: QUALITY })).arrayBuffer());
+    }
+
+    const sameBytes = (a, b) => a.length === b.length && a.every((value, i) => value === b[i]);
+
+    $("start").addEventListener("click", async (event) => {
+      const passphrase = $("pass1").value;
+      if (passphrase.length < 12) return (status.textContent = "Bitte ein Passwort mit mindestens 12 Zeichen (besser: 4 zufällige Wörter).");
+      if (passphrase !== $("pass2").value) return (status.textContent = "Die Passwörter stimmen nicht überein.");
+      event.target.disabled = true;
+      try {
+        const existing = await fetchManifest();
+        const rekey = $("rekey").checked || !existing;
+        // Same salt as before, so unchanged packs (and keys stored on phones) stay valid.
+        const salt = rekey ? crypto.getRandomValues(new Uint8Array(16)) : fromBase64(existing.kdf.salt);
+        const iterations = rekey ? ITERATIONS : existing.kdf.iterations;
+        status.textContent = "Leite Schlüssel ab …";
+        const key = await deriveKey(passphrase, salt, iterations);
+        if (!rekey && !(await keyMatches(key, existing.check))) {
+          throw new Error("Das Passwort passt nicht zu den vorhandenen Paketen. Für ein neues Passwort den Haken setzen.");
+        }
+
+        const variants = await fetch("/api/variants").then((r) => r.json());
+        const groups = new Map();
+        for (const variant of variants) {
+          const name = variant.cardNo.split("-")[0];
+          if (!groups.has(name)) groups.set(name, []);
+          groups.get(name).push(variant);
+        }
+        const oldPacks = new Map((rekey ? [] : existing.packs).map((p) => [p.name, p]));
+        progress.max = variants.length;
+        let done = 0, totalBytes = 0, reused = 0;
+        const packs = [];
+        for (const [name, members] of [...groups].sort(([a], [b]) => a.localeCompare(b))) {
+          const entries = [];
+          for (const variant of members) {
+            entries.push({ file: variant.file, bytes: await shrink(await loadImage(`/ref-images/${variant.file}`)) });
+            progress.value = ++done;
+          }
+          const plain = pack(entries);
+          const old = oldPacks.get(name);
+          let file;
+          if (old) {
+            const before = await fetch(`../images/${old.file}`, { cache: "no-store" }).then((r) => (r.ok ? r.arrayBuffer() : null));
+            if (before && sameBytes(await decrypt(key, before), plain)) file = old.file;
+          }
+          if (file) {
+            reused++;
+          } else {
+            const sealed = await encrypt(key, plain);
+            file = `${name}.${await sha16(sealed)}.bin`;
+            await post(file, sealed);
+          }
+          totalBytes += plain.length;
+          packs.push({ name, file, count: entries.length });
+          log(`${name}: ${entries.length} Bilder, ${(plain.length / 1e6).toFixed(1)} MB${file === old?.file ? " (unverändert)" : ""}`);
+        }
+
+        const manifest = {
+          format: "gcg-images-1",
+          width: WIDTH,
+          kdf: { name: "PBKDF2-SHA256", iterations, salt: toBase64(salt) },
+          check: rekey ? await makeCheck(key) : existing.check,
+          packs,
+        };
+        await post("index.json", new TextEncoder().encode(JSON.stringify(manifest, null, 2) + "\n"));
+        const removed = await fetch("/api/images/prune", { method: "POST", body: JSON.stringify(packs.map((p) => p.file)) }).then((r) => r.json());
+        log(`\nFertig: ${packs.length} Pakete (${reused} unverändert), ${(totalBytes / 1e6).toFixed(1)} MB, ${removed.length} alte Dateien gelöscht.`);
+        status.dataset.done = "true";
+      } catch (error) {
+        log(`Fehler: ${error.message}`);
+        status.dataset.done = "error";
+      }
+      event.target.disabled = false;
+    });
+  </script>
+</body>
+</html>

@@ -62,14 +62,21 @@ button.danger { border-color: var(--bad); color: var(--bad); }
 
 /* ---- Card images ---------------------------------------------------------------------------- */
 
-.card-img { aspect-ratio: 63 / 88; border-radius: 4px; display: block; background: #2a3038; object-fit: cover; }
+/* Fills its container (thumb button, hit tile, variant tile), which sets the size. */
+.card-img { width: 100%; height: auto; aspect-ratio: 63 / 88; border-radius: 4px; display: block; background: #2a3038; object-fit: cover; }
 .noimg {
+  width: 100%;
   aspect-ratio: 63 / 88; border-radius: 4px; background: #2a3038; color: var(--muted);
   display: flex; align-items: center; justify-content: center; text-align: center; font-size: 10px; padding: 2px;
 }
 
 /* ---- Overview ------------------------------------------------------------------------------- */
 
+.unlock { background: var(--panel); border: 1px solid var(--accent); border-radius: 8px; padding: 8px 10px; margin: 0 0 8px; font-size: 14px; }
+.unlock p { margin: 0 0 8px; }
+.unlock input { flex: 1; min-width: 0; font: inherit; color: var(--text); background: var(--bg); border: 1px solid #3a424d; border-radius: 8px; padding: 8px 10px; }
+.unlock .row { flex-wrap: nowrap; }
+.unlock #unlock-status { margin: 8px 0 0; }
 .hint { background: rgba(255, 183, 77, 0.12); border: 1px solid var(--warn); border-radius: 8px; padding: 8px 10px; margin: 0 0 8px; font-size: 14px; }
 .items { display: flex; flex-direction: column; }
 .item { display: flex; gap: 10px; align-items: center; padding: 8px 0; border-bottom: 1px solid #2a3038; }

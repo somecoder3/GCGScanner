@@ -9,13 +9,17 @@ Serves pwa/ like GitHub Pages does, plus routes for the dev pages in pwa/dev/:
   POST /api/index           stores the index from dev/build-index.html together with the variant list
                             it was built from (pwa/data/variants.json + embeddings.*)
   POST /api/eval-result     stores the last dev/eval.html result in build/eval-result.json
+  POST /api/images/file?name=<file>   stores one encrypted image pack or the manifest in pwa/images/
+  POST /api/images/prune    deletes pack files in pwa/images/ that the posted JSON list does not keep
 """
 
 import argparse
 import hashlib
 import http.server
 import json
+import re
 import shutil
+import urllib.parse
 import socket
 import sqlite3
 import ssl
@@ -30,6 +34,8 @@ CARDS_DB = REPO_ROOT / "data" / "cards.db"
 IMAGE_DIR = REPO_ROOT / "build" / "carddb-cache" / "images"
 CERT_DIR = REPO_ROOT / "build" / "cert"
 EVAL_RESULT = REPO_ROOT / "build" / "eval-result.json"
+IMAGE_PACK_DIR = PWA_DIR / "images"
+IMAGE_PACK_NAME = re.compile(r"^(index\.json|[A-Za-z0-9]+\.[0-9a-f]{16}\.bin)$")
 
 
 def export_variants() -> bytes:
@@ -139,6 +145,20 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self.reply(204)
         elif route == "/api/index":
             self.store_index(body)
+        elif route == "/api/images/file":
+            name = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query).get("name", [""])[0]
+            if not IMAGE_PACK_NAME.match(name):
+                self.send_error(400, "invalid image pack file name")
+                return
+            IMAGE_PACK_DIR.mkdir(exist_ok=True)
+            (IMAGE_PACK_DIR / name).write_bytes(body)
+            self.reply(204)
+        elif route == "/api/images/prune":
+            keep = set(json.loads(body))
+            removed = [p.name for p in IMAGE_PACK_DIR.glob("*.bin") if p.name not in keep]
+            for name in removed:
+                (IMAGE_PACK_DIR / name).unlink()
+            self.reply(200, json.dumps(removed).encode(), "application/json")
         else:
             self.send_error(404)
 

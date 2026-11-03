@@ -4,7 +4,8 @@
 //   gcg-shell-<VERSION>  HTML/CSS/JS, replaced on every deploy (VERSION is set by the Pages workflow)
 //   gcg-assets-v1        model, ONNX runtime and index data. Their URLs change when the content does
 //                        (versioned folder, ?v=<hash>), so entries are used as they are.
-//   gcg-images-v1        card images from cdn.exburst.dev, kept forever (each is fetched only once)
+//   gcg-card-images-v1   decrypted card images, written by the page (imagepack.js) after unlocking;
+//                        served here under images/card/<file>. The encrypted packs are not cached.
 //
 // It also adds the cross-origin isolation headers that GitHub Pages cannot send, so multi-threaded
 // WebAssembly works from the second visit on (only matters when WebGPU is not available).
@@ -13,8 +14,9 @@ const VERSION = "dev";
 const DEV = VERSION === "dev";
 const SHELL_CACHE = `gcg-shell-${VERSION}`;
 const ASSET_CACHE = "gcg-assets-v1";
-const IMAGE_CACHE = "gcg-images-v1";
-const IMAGE_HOST = "https://cdn.exburst.dev/";
+const IMAGE_CACHE = "gcg-card-images-v1";
+// Caches of earlier versions that are no longer used.
+const OBSOLETE_CACHES = ["gcg-images-v1"];
 
 const SHELL = [
   "./",
@@ -25,6 +27,7 @@ const SHELL = [
   "js/app.js",
   "js/collection.js",
   "js/embedder.js",
+  "js/imagepack.js",
   "js/images.js",
   "js/matcher.js",
   "icons/icon-192.png",
@@ -49,7 +52,7 @@ self.addEventListener("message", (event) => {
 self.addEventListener("activate", (event) => {
   event.waitUntil((async () => {
     for (const name of await caches.keys()) {
-      if (name.startsWith("gcg-shell-") && name !== SHELL_CACHE) await caches.delete(name);
+      if ((name.startsWith("gcg-shell-") && name !== SHELL_CACHE) || OBSOLETE_CACHES.includes(name)) await caches.delete(name);
     }
     const assets = await caches.open(ASSET_CACHE);
     for (const request of await assets.keys()) {
@@ -65,13 +68,19 @@ self.addEventListener("fetch", (event) => {
   if (request.method !== "GET") return;
   const url = new URL(request.url);
 
-  if (url.href.startsWith(IMAGE_HOST)) {
-    event.respondWith(cacheFirst(IMAGE_CACHE, request));
-    return;
-  }
   if (!url.href.startsWith(scope.href)) return;
   const path = url.href.slice(scope.href.length).split(/[?#]/)[0];
   if (path.startsWith("dev/")) return; // dev pages talk to the dev server directly
+
+  if (path.startsWith("images/card/")) {
+    // Only on the phone after unlocking; the server has no such files.
+    event.respondWith(caches.match(request, { cacheName: IMAGE_CACHE }).then((cached) => cached ?? new Response("", { status: 404 })));
+    return;
+  }
+  if (path.startsWith("images/")) {
+    // Encrypted packs and their index: straight from the network (imagepack.js keeps the result).
+    return;
+  }
 
   if (request.mode === "navigate") {
     // Every page of the app is index.html (the list view is just #liste).

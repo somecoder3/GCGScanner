@@ -4,6 +4,7 @@ import { createEmbedder, DEFAULT_BACKEND } from "./embedder.js";
 import { loadIndex, search, siblings } from "./matcher.js";
 import { Collection } from "./collection.js";
 import { cardImage } from "./images.js";
+import { ImageStore } from "./imagepack.js";
 
 const $ = (id) => document.getElementById(id);
 const video = $("video");
@@ -52,6 +53,7 @@ async function boot() {
   collection.onChange(() => { renderCount(); if (!$("list-view").hidden) renderList(); });
   renderCount();
   showView();
+  updateImages(); // in the background: new image packs since the last visit
 }
 
 // ---- Service worker (offline use, image cache, update notice) ---------------------------------
@@ -529,11 +531,75 @@ async function renderStorage() {
     if (await navigator.storage.persisted?.()) parts.push("dauerhaft");
   } catch {}
   try {
-    const images = await (await caches.open("gcg-images-v1")).keys();
-    parts.push(`${images.length} Kartenbilder`);
+    parts.push(`${(await images.status()).count} Kartenbilder`);
   } catch {}
   $("storage").textContent = parts.join(" · ");
 }
+
+// ---- Card images (encrypted packs, see imagepack.js) ------------------------------------------
+
+const images = new ImageStore();
+
+function imageProgress({ pack, done, total }) {
+  const line = $("unlock-status");
+  line.hidden = false;
+  line.textContent = pack ? `Lade Kartenbilder … ${pack} (${done + 1}/${total})` : "Kartenbilder geladen.";
+}
+
+// Shows the unlock form when packs exist but this phone has no key yet, otherwise imports new packs.
+async function updateImages() {
+  let state;
+  try {
+    state = await images.status();
+  } catch (error) {
+    console.warn("Bildstatus unbekannt", error);
+    return;
+  }
+  $("unlock").hidden = !state.available || state.unlocked;
+  if (state.unlocked && state.pending) {
+    try {
+      const count = await images.sync(imageProgress);
+      if (count) imagesChanged(`${count} neue Kartenbilder geladen`);
+    } catch (error) {
+      console.warn("Bildpakete nicht aktualisiert", error);
+    }
+  }
+}
+
+function imagesChanged(message) {
+  if (message) toast(message);
+  shownId = ""; // rebuild the hit tile with the image
+  renderHit();
+  if (!$("list-view").hidden) {
+    renderList();
+    renderStorage();
+  }
+}
+
+$("unlock").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const button = event.target.querySelector("button");
+  button.disabled = true;
+  const line = $("unlock-status");
+  line.hidden = false;
+  line.textContent = "Prüfe Passwort …";
+  try {
+    const count = await images.unlock($("passphrase").value, imageProgress);
+    $("passphrase").value = "";
+    $("unlock").hidden = true;
+    imagesChanged(`${count} Kartenbilder freigeschaltet`);
+  } catch (error) {
+    line.textContent = error.message;
+  }
+  button.disabled = false;
+});
+
+$("forget-images").addEventListener("click", async () => {
+  if (!confirm("Kartenbilder und Schlüssel vom Handy löschen? Danach ist das Passwort erneut nötig.")) return;
+  await images.clear();
+  imagesChanged("Kartenbilder gelöscht");
+  updateImages();
+});
 
 // ---- Helpers ----------------------------------------------------------------------------------
 

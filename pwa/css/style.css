@@ -11,6 +11,8 @@
 }
 
 * { box-sizing: border-box; }
+/* Elements with their own display (flex, grid) would otherwise ignore the hidden attribute. */
+[hidden] { display: none !important; }
 
 body {
   margin: 0;

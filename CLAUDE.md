@@ -21,9 +21,10 @@ Der Nutzer kommt aus der Webentwicklung.
   (`.github/workflows/pages.yml`). Details und Abläufe: `pwa/README.md`.
   - Scanner (eine Karte im Rahmen) → *Fertig* → Übersicht `#liste` mit Bildern, Mengen,
     **Variantenauswahl** und CSV teilen/kopieren/speichern. Liste bleibt in `localStorage`.
-  - Offline-fähig über Service Worker. Kartenbilder von der ExBurst-CDN, dauerhaft im Cache.
-  - Lokal vollständig getestet (simulierte Kamera, Pages-ähnlicher Server ohne Header, offline,
-    Update-Ablauf). **Noch nicht auf GitHub Pages deployt und nicht am Handy getestet.**
+  - Offline-fähig über Service Worker. **Kartenbilder aus verschlüsselten Paketen** (`pwa/images/`,
+    Passwort nur beim Nutzer), siehe „Kartenbilder“ unten. Die ExBurst-CDN geht wegen Hotlink-Schutz nicht.
+  - Seit 3. Nov. live auf `https://somecoder3.github.io/GCGScanner/` und am Handy benutzt. Die
+    Bildpakete muss der Nutzer mit seinem Passwort selbst bauen und committen (Stand: noch offen).
 - Vorher (2. Nov.): Machbarkeitstest am Handy (Android, Chrome): **WebGPU ~19 Bilder/s bei ~45 ms
   Modell**, wasm unter 10 Bilder/s bei über 100 ms. Erkennung laut Nutzer „ganz gut, auch mit Sleeves“.
 - Noch nicht umgesetzt: mehrere Karten gleichzeitig, Preise, ExBurst-Login/Direktimport.
@@ -48,10 +49,14 @@ Der Nutzer kommt aus der Webentwicklung.
 - **Bildquelle**: gundam-gcg.com sendet `Cross-Origin-Resource-Policy: same-site`, die Bilder lassen
   sich auf fremden Seiten nicht anzeigen. `https://cdn.exburst.dev/cards/gundam-en/<official_id>.webp`
   (BunnyCDN) sendet `Access-Control-Allow-Origin: *` und cacht 30 Tage. `?width=360` verkleinert
-  serverseitig (69 statt 123 KB). **Alle 2205 Varianten sind dort vorhanden** (am 3. Nov. geprüft).
-  Achtung: Eine `HEAD`-Anfrage liefert andere Header als `GET`; zum Prüfen `GET` verwenden. Es ist
-  ExBursts Bandbreite, daher wird jedes Bild nur einmal pro Handy geladen (Service Worker). Vor
-  intensiver Nutzung bei ExBurst nachfragen.
+  serverseitig (69 statt 123 KB). Alle 2205 Varianten sind dort vorhanden (am 3. Nov. geprüft).
+  Achtung: Eine `HEAD`-Anfrage liefert andere Header als `GET`; zum Prüfen `GET` verwenden.
+  **Nicht nutzbar (3. Nov.): Die ExBurst-CDN hat Hotlink-Schutz.** Mit einem Referrer von
+  `somecoder3.github.io` (und auch von `example.com` oder sogar `exburst.dev`) kommt 403. Nur Anfragen
+  ohne Referrer und von `localhost` gehen durch. Deshalb liefen die lokalen Tests, auf Pages
+  zeigt die App aber nur die Platzhalter mit der Kartennummer. Mit `referrerPolicy="no-referrer"`
+  ließe sich das umgehen. Das hebelt aber ExBursts bewusste Schutzmaßnahme aus und ist **nicht**
+  eingebaut. Gewählte Lösung: verschlüsselte Bildpakete (siehe „Kartenbilder“).
 - Bandai-Bilder **nicht** selbst auf GitHub Pages hosten: Pages ist öffentlich (auch bei privatem
   Repo), das wäre eine Weiterverbreitung. Das Repo ist öffentlich (API liefert 200).
 
@@ -80,6 +85,12 @@ vom 3. Nov.; der float32-Index mit wasm lag gleichauf (schwer: 86,7 / 80,7 / 82,
 | schwer | 87,0 % | 81,0 % | 83,0 % | 95 % |
 
 Geschwindigkeit am PC: WebGPU 7–10 ms pro Bild (~28 Bilder/s im Scanner), wasm ~21 ms.
+
+Genauigkeit des Index direkt gemessen (3. Nov., 101 Karten): WebGPU- und CPU-Vektoren am PC sind
+identisch (Kosinus 1,00000), int8 gegen exakt 0,99995 (min. 0,99992). Die Quantisierung ist damit rund
+400× kleiner als typische Abstände zwischen Kandidaten und **kein** Grund für eine schlechtere
+Erkennung. Der Nutzer empfand die Pages-Version als schlechter; Verdacht: Die Objektivwahl liegt in
+`localStorage` und gilt pro Origin, auf `github.io` war also wieder das unscharfe Standard-Objektiv aktiv.
 
 - **Viele ALT-Nummern sind Nachdrucke derselben Illustration** in anderen Produkten (Deck Build Box
   SC01, Edition Beta, Promos), z. B. `GD01-118` gibt es 9×. Sie unterscheiden sich nur durch Kleinigkeiten
@@ -112,6 +123,31 @@ Geschwindigkeit am PC: WebGPU 7–10 ms pro Bild (~28 Bilder/s im Scanner), wasm
   `history.back()`, sonst wird nur der Hash entfernt.
 - In `app.js` steht `await boot()` am Dateiende, sonst greift `boot()` auf noch nicht
   initialisierte `let`-Variablen zu (TDZ-Fehler).
+- `style.css` enthält `[hidden] { display: none !important; }`. Ohne diese Regel überschreiben
+  `display: flex`-Regeln das `hidden`-Attribut: Scanner und Liste waren gleichzeitig sichtbar,
+  Zoom-Leiste und leeres Trefferfeld ebenfalls. Fiel erst im Screenshot auf → Ansichten per
+  Screenshot oder `getComputedStyle` prüfen, nicht nur die `hidden`-Eigenschaft.
+
+## Kartenbilder (`pwa/js/imagepack.js`, `pwa/dev/build-images.html`)
+
+- Bilder (300 px, WebP q 0.8, ~30 KB) pro Kartennummer-Präfix (`GD01`, `ST04`, `T`, …) in je ein Paket:
+  `u32 Headerlänge + JSON [{f,o,n}] + Bytes`, verschlüsselt mit AES-GCM-256 (12-Byte-IV vorangestellt).
+  Der Schlüssel kommt per PBKDF2-SHA256 (600 000 Iterationen, Salt in `images/index.json`) aus dem
+  Passwort. `check` in `index.json` ist ein verschlüsselter Prüftext, damit ein falsches Passwort sofort
+  auffällt. Dateinamen `<Name>.<sha256-16>.bin` (Inhalts-Hash). 28 Pakete, 63 MB.
+- Die Bilder dürfen nicht frei zugänglich sein, und Verstecken/Verschleiern reicht dafür nicht. Nur mit dem Passwort
+  (Zugriffsschutz) ist die Veröffentlichung vertretbar. Das Passwort steht nirgends im Repo; Claude
+  kennt es nicht und hat zum Testen nur Wegwerf-Pakete gebaut, die **nicht** committet wurden.
+- Neubau mit demselben Passwort: Salt bleibt, jedes Paket wird entschlüsselt und mit dem neuen
+  Inhalt verglichen; Gleiches bleibt byte-gleich (Canvas-WebP-Encoder ist deterministisch, getestet).
+  Nur neue/geänderte Pakete kommen ins Repo.
+- Am Handy: `ImageStore.unlock()` leitet den Schlüssel ab (nicht extrahierbar, IndexedDB
+  `gcg-scanner/keys`), entschlüsselt alle Pakete und legt jedes Bild in Cache Storage
+  `gcg-card-images-v1` unter `images/card/<file>`. Welche Pakete schon da sind, steht in
+  `images/card/_packs.json` im selben Cache. Beim App-Start lädt `updateImages()` neue Pakete im
+  Hintergrund. Am PC dauert das Freischalten 7–8 s.
+- Der Service Worker liefert `images/card/*` nur aus dem Cache (sonst 404) und lässt `images/*`
+  (Pakete, `index.json`) ungecacht durch, damit die 63 MB nicht doppelt gespeichert werden.
 
 ## Scanner-Robustheit (`pwa/js/app.js`)
 
@@ -134,6 +170,9 @@ Geschwindigkeit am PC: WebGPU 7–10 ms pro Bild (~28 Bilder/s im Scanner), wasm
   Hintergrund-Tabs, stattdessen `onload` nutzen. Lazy-Bilder laden dort nicht.
 - Simulierte Kamera: Canvas mit `captureStream(0)`, nach jedem Zeichnen `track.requestFrame()`
   aufrufen. Ohne neues Bild bleibt `video.play()` hängen.
+- Lokal funktioniert manches, was auf Pages scheitert (z. B. ExBursts Hotlink-Schutz lässt
+  `localhost` durch). Externe Abhängigkeiten mit einem echten Referrer (`curl -H "Referer: …"`)
+  oder auf der Live-Seite prüfen.
 - Pages-ähnlicher Test: `pwa/` nach `build/site-test` kopieren, `dev/` entfernen, `VERSION` setzen,
   mit `python -m http.server 8010 -d build/site-test` ausliefern (ohne COOP/COEP). Offline-Test:
   den Server stoppen und neu laden.
@@ -198,3 +237,5 @@ steht sie im Server-Log, auch ein abgelehntes Zertifikat (`TLS handshake failed`
 - Neues Set: `build_carddb.py --details --images --refresh`, Dev-Server starten,
   `http://localhost:8000/dev/build-index.html` → Start, dann `data/cards.db` und `pwa/data/` committen.
 - Icons: `build/venv/Scripts/python tools/icons/make_icons.py` (braucht numpy aus der venv).
+- Neues Set, Bilder: nach dem Index `http://localhost:8000/dev/build-images.html` mit dem **bisherigen**
+  Passwort ausführen (macht der Nutzer selbst), dann `pwa/images/` committen.

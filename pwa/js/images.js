@@ -1,14 +1,11 @@
-// Card images come from ExBurst's CDN: it allows cross-origin use (Access-Control-Allow-Origin: *) and
-// names files like the official site (GD06-002_p1.webp). gundam-gcg.com itself sends
-// Cross-Origin-Resource-Policy: same-site, so its images cannot be shown here. The service worker keeps
-// every image it has loaded once, so each picture is requested from ExBurst only once per phone.
+// Card images come from the encrypted image packs (see imagepack.js): once unlocked, they live in the
+// phone's Cache Storage and the service worker serves them under images/card/<file>. Until then, or
+// for a card missing from the packs, a box with the card number shows instead.
 
-const CDN = "https://cdn.exburst.dev/cards/gundam-en/";
-// The CDN resizes on request; 360 px wide is sharp enough for thumbnails and half the original size.
-const WIDTH = 360;
+import { cardImageUrl } from "./imagepack.js";
 
 export function imageUrl(variant) {
-  return `${CDN}${variant.file}?width=${WIDTH}`;
+  return cardImageUrl(variant.file);
 }
 
 // <img> for a variant; falls back to a box with the card number when the image cannot be loaded.
@@ -18,8 +15,6 @@ export function cardImage(variant) {
   img.alt = variant.id;
   img.decoding = "async";
   img.loading = "lazy";
-  // A CORS request, so the service worker gets a readable response it can check and cache.
-  img.crossOrigin = "anonymous";
   img.addEventListener("error", () => {
     const box = document.createElement("div");
     box.className = "noimg";

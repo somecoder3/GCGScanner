@@ -5,7 +5,7 @@ sie im ExBurst-Importformat. Läuft komplett im Browser und nach dem ersten Lade
 
 Ablauf in der App: Kamera starten → Karte in den Rahmen halten → grüner Rahmen → *Übernehmen*
 (oder auf den Treffer tippen) → *Fertig* → Varianten prüfen, Mengen anpassen → *CSV teilen /
-kopieren / speichern* → in ExBurst unter Collection importieren.
+kopieren / speichern* → in ExBurst in die Collection importieren.
 
 ## Aufbau
 
@@ -15,11 +15,12 @@ kopieren / speichern* → in ExBurst unter Collection importieren.
 | `js/embedder.js` | MobileNetV2-Merkmale über onnxruntime-web, WebGPU mit Rückfall auf wasm |
 | `js/matcher.js` | Index laden (int8), Suche, Nachdrucke derselben Illustration finden |
 | `js/collection.js` | Liste der gescannten Karten (localStorage), CSV-Export |
-| `js/images.js` | Kartenbilder von `cdn.exburst.dev` (CORS erlaubt, alle 2205 vorhanden) |
-| `sw.js` | Service Worker: Offline-Cache, Bilder dauerhaft, Isolations-Header |
+| `js/imagepack.js`, `js/images.js` | Verschlüsselte Bildpakete: Passwort, Entschlüsseln, lokaler Bildspeicher |
+| `sw.js` | Service Worker: Offline-Cache, entschlüsselte Bilder unter `images/card/`, Isolations-Header |
 | `data/` | Index und Kartenliste, **committet** (nur lokal erzeugbar) |
+| `images/` | Verschlüsselte Kartenbilder (ein Paket pro Set) und `index.json`, **committet** |
 | `model/`, `vendor/` | Modell und ONNX-Runtime, **nicht** im Repo (Skripte unter `tools/`) |
-| `dev/` | Index bauen, Erkennung messen; nur mit dem Dev-Server, wird nicht veröffentlicht |
+| `dev/` | Index bauen, Bildpakete bauen, Erkennung messen; nur mit dem Dev-Server, wird nicht veröffentlicht |
 
 ## Lokal entwickeln
 
@@ -69,6 +70,23 @@ python tools/carddb/build_carddb.py --details --images --refresh
 Dann den Dev-Server starten, **http://localhost:8000/dev/build-index.html** → *Start* (ca. 6 min) und
 `pwa/data/` committen. Kartenliste und Index werden immer zusammen gespeichert, damit sie zueinander
 passen.
+
+## Kartenbilder (verschlüsselte Pakete)
+
+Die Bilder gehören Bandai und dürfen nicht öffentlich auf GitHub Pages liegen. ExBursts CDN blockiert
+fremde Seiten (Hotlink-Schutz). Deshalb liegen sie nur **verschlüsselt** in `images/`: AES-GCM, der
+Schlüssel kommt per PBKDF2 aus einem Passwort, das nirgends gespeichert ist. Ohne Passwort sind die
+Pakete wertlos.
+
+Pakete bauen (braucht die lokalen Kartenbilder aus `build_carddb.py --images`): Dev-Server starten,
+**http://localhost:8000/dev/build-images.html** öffnen, Passwort zweimal eingeben → *Start* (ca. 3 min).
+Dann `pwa/images/` committen. Bei späteren Läufen (neues Set) dasselbe Passwort nehmen: Unveränderte
+Pakete bleiben byte-gleich, nur neue oder geänderte kommen dazu. Ein neues Passwort (Haken setzen)
+verschlüsselt alles neu, danach muss es auf jedem Handy neu eingegeben werden.
+
+In der App: *Fertig* → Passwort eingeben → *Freischalten*. Die App merkt sich den abgeleiteten Schlüssel
+(nicht das Passwort) und lädt neue Pakete später selbst. *Einstellungen → Kartenbilder vom Handy
+löschen* entfernt Bilder und Schlüssel.
 
 ## Auf GitHub Pages veröffentlichen
 

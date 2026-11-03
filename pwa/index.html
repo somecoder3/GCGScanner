@@ -45,6 +45,15 @@
       <button id="back" class="icon" aria-label="Zurück zum Scanner">‹</button>
       <h1>Erkannte Karten (<span id="list-count">0</span>)</h1>
     </header>
+    <form id="unlock" class="unlock" hidden>
+      <p>Die Kartenbilder sind verschlüsselt. Passwort einmal eingeben, danach bleiben sie auf dem Handy
+        (auch offline) und neue Sets kommen automatisch dazu.</p>
+      <div class="row">
+        <input id="passphrase" type="password" autocomplete="current-password" placeholder="Passwort" required>
+        <button class="primary">Freischalten</button>
+      </div>
+      <p id="unlock-status" class="muted small" hidden></p>
+    </form>
     <p id="check-hint" class="hint" hidden></p>
     <div id="items" class="items"></div>
     <p id="empty" class="muted empty">Noch keine Karten. Zurück zum Scanner, Karte in den Rahmen halten und übernehmen.</p>
@@ -60,7 +69,10 @@
       <summary>Einstellungen &amp; Technik</summary>
       <label>Erkennung <select id="backend"><option value="webgpu">WebGPU (schnell)</option><option value="wasm">WebAssembly</option></select></label>
       <p id="storage" class="muted"></p>
-      <button id="clear" class="danger">Liste leeren</button>
+      <div class="row">
+        <button id="forget-images">Kartenbilder vom Handy löschen</button>
+        <button id="clear" class="danger">Liste leeren</button>
+      </div>
     </details>
   </main>
 
