@@ -25,7 +25,7 @@ FEATURE_DIM = 1280
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SOURCE = REPO_ROOT / "build" / "model" / "mobilenetv2-12.onnx"
-TARGET = REPO_ROOT / "pwa-spike" / "model" / "mobilenetv2-features.onnx"
+TARGET = REPO_ROOT / "pwa" / "model" / "mobilenetv2-features.onnx"
 
 
 def main():

@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Erkennung messen</title>
-  <link rel="stylesheet" href="css/style.css">
+  <link rel="stylesheet" href="../css/style.css">
 </head>
 <body>
   <h1>Erkennung messen</h1>
@@ -22,8 +22,8 @@
   <div class="thumbs" id="failures"></div>
 
   <script type="module">
-    import { createEmbedder, loadImage } from "./js/embedder.js";
-    import { loadIndex, search } from "./js/matcher.js";
+    import { createEmbedder, loadImage } from "../js/embedder.js";
+    import { loadIndex, search, similarity, LOOK_ALIKE } from "../js/matcher.js";
 
     // Simulated camera frame and the scanner's guide box (82 % of the height, card aspect, centred).
     const FRAME_W = 720, FRAME_H = 960;
@@ -39,13 +39,6 @@
     const $ = (id) => document.getElementById(id);
     const status = $("status");
 
-    const LOOK_ALIKE = 0.95;
-    function similarity({ variants, dim, vectors }, a, b) {
-      const ia = variants.indexOf(a) * dim, ib = variants.indexOf(b) * dim;
-      let dot = 0;
-      for (let i = 0; i < dim; i++) dot += vectors[ia + i] * vectors[ib + i];
-      return dot;
-    }
 
     function mulberry32(seed) {
       return () => {
@@ -141,7 +134,7 @@
           const stat = { n: 0, top1: 0, top5: 0, cardTop1: 0, altMixup: 0, lookAlike: 0, ms: 0 };
           for (let n = 0; n < perLevel; n++) {
             const variant = index.variants[Math.floor(rand() * index.variants.length)];
-            const image = await loadImage(`ref-images/${variant.file}`);
+            const image = await loadImage(`/ref-images/${variant.file}`);
             const frame = await simulate(image, level, rand);
             const t0 = performance.now();
             const matches = search(index, await embedder.embed(frame, GUIDE), 5);
@@ -154,12 +147,12 @@
             stat.cardTop1 += best.cardNo === variant.cardNo;
             stat.altMixup += !hit && best.cardNo === variant.cardNo;
             // Reprints of the same artwork (e.g. Deck Build Box, Edition Beta) differ only in tiny marks.
-            stat.lookAlike += hit || (best.cardNo === variant.cardNo && similarity(index, best, variant) >= LOOK_ALIKE);
+            stat.lookAlike += hit || (best.cardNo === variant.cardNo && similarity(index, index.byId.get(best.id), index.byId.get(variant.id)) >= LOOK_ALIKE);
             if (name === "schwer" && n < 8) {
-              $("examples").append(figure(frame, `${variant.id}`), figure(best.url, `→ ${best.id} ${(matches[0].score * 100).toFixed(0)} %`, hit ? "ok" : "bad"));
+              $("examples").append(figure(frame, `${variant.id}`), figure(`/ref-images/${best.file}`, `→ ${best.id} ${(matches[0].score * 100).toFixed(0)} %`, hit ? "ok" : "bad"));
             }
             if (!hit && $("failures").children.length < 24) {
-              $("failures").append(figure(frame, `${name}: ${variant.id}`), figure(best.url, `→ ${best.id}`, "bad"));
+              $("failures").append(figure(frame, `${name}: ${variant.id}`), figure(`/ref-images/${best.file}`, `→ ${best.id}`, "bad"));
             }
             if (n % 20 === 0) status.textContent = `${name}: ${n}/${perLevel} …`;
           }
@@ -176,7 +169,7 @@
         }
         status.textContent = JSON.stringify(results, null, 2);
         status.dataset.done = "true";
-        fetch("api/eval-result", { method: "POST", body: status.textContent }).catch(() => {});
+        fetch("/api/eval-result", { method: "POST", body: status.textContent }).catch(() => {});
       } catch (error) {
         status.textContent = `Fehler: ${error.message}\n${error.stack}`;
         status.dataset.done = "error";

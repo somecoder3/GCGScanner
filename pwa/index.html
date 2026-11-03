@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#111418">
+  <meta name="description" content="Gundam Card Game Karten mit der Kamera erkennen und als ExBurst-Liste exportieren.">
+  <title>GCG Scanner</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon-192.png" type="image/png">
+  <link rel="apple-touch-icon" href="icons/icon-192.png">
+  <link rel="stylesheet" href="css/style.css">
+  <link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+  <!-- Scanner: header plus viewer fill exactly one screen, so guide, hit and buttons are all visible at once. -->
+  <main id="scan-view" class="view screen">
+    <header class="bar">
+      <h1>GCG Scanner</h1>
+      <span id="update" class="update" hidden>Neue Version – <button id="reload" class="link">neu laden</button></span>
+    </header>
+
+    <div class="viewer" id="viewer">
+      <video id="video" playsinline muted></video>
+      <div class="guide" id="guide"></div>
+      <div class="top">
+        <div class="stats" id="stats">Lade Erkennung …</div>
+        <select id="lens" hidden aria-label="Kamera"></select>
+      </div>
+      <label class="zoom" id="zoom-row" hidden>Zoom <input id="zoom" type="range"><span id="zoom-value"></span></label>
+      <div class="hud">
+        <div id="hit" class="hit" hidden></div>
+        <div class="actions">
+          <button id="camera" class="primary" disabled>Kamera starten</button>
+          <button id="take" disabled>Übernehmen</button>
+          <button id="done">Fertig (<span id="scan-count">0</span>)</button>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <!-- Overview after scanning: check variants, adjust counts, export. -->
+  <main id="list-view" class="view" hidden>
+    <header class="bar">
+      <button id="back" class="icon" aria-label="Zurück zum Scanner">‹</button>
+      <h1>Erkannte Karten (<span id="list-count">0</span>)</h1>
+    </header>
+    <p id="check-hint" class="hint" hidden></p>
+    <div id="items" class="items"></div>
+    <p id="empty" class="muted empty">Noch keine Karten. Zurück zum Scanner, Karte in den Rahmen halten und übernehmen.</p>
+
+    <div class="export">
+      <button id="share" class="primary">CSV teilen</button>
+      <button id="copy">CSV kopieren</button>
+      <button id="download">CSV speichern</button>
+    </div>
+    <button id="scan-more" class="wide">Weiter scannen</button>
+
+    <details class="tech">
+      <summary>Einstellungen &amp; Technik</summary>
+      <label>Erkennung <select id="backend"><option value="webgpu">WebGPU (schnell)</option><option value="wasm">WebAssembly</option></select></label>
+      <p id="storage" class="muted"></p>
+      <button id="clear" class="danger">Liste leeren</button>
+    </details>
+  </main>
+
+  <dialog id="variant-dialog">
+    <form method="dialog" class="dialog-head">
+      <h2 id="variant-title">Variante wählen</h2>
+      <button class="icon" aria-label="Schließen">×</button>
+    </form>
+    <p class="muted small">Nachdrucke derselben Illustration (z. B. Deck Build Box, Edition Beta, Promo) sieht die
+      Kamera nicht auseinander – bitte am Kartenrand vergleichen (Block-Nummer, Folie, Stempel).</p>
+    <div id="variant-grid" class="variant-grid"></div>
+  </dialog>
+
+  <div id="toast" class="toast" hidden></div>
+
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>

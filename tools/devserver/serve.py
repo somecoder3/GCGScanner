@@ -1,16 +1,18 @@
-"""Dev server for the PWA spike (Python standard library only).
+"""Dev server for the PWA in pwa/ (Python standard library only).
 
-    python pwa-spike/serve.py            # http://localhost:8000  (PC, camera works on localhost)
-    python pwa-spike/serve.py --https    # https://<LAN-IP>:8443  (phone; self-signed certificate)
+    python tools/devserver/serve.py            # http://localhost:8000  (PC, camera works on localhost)
+    python tools/devserver/serve.py --https    # https://<LAN-IP>:8443  (phone; self-signed certificate)
 
-On start it exports data/cards.db to pwa-spike/data/variants.json. Extra routes:
-  GET  /ref-images/<file>   card images from build/carddb-cache/images (for build-index/eval)
-  POST /api/index           stores the reference embeddings computed by build-index.html
-  POST /api/eval-result     stores the last eval.html result in build/eval-result.json
+Serves pwa/ like GitHub Pages does, plus routes for the dev pages in pwa/dev/:
+  GET  /api/variants        card variants exported live from data/cards.db
+  GET  /ref-images/<file>   card images from build/carddb-cache/images
+  POST /api/index           stores the index from dev/build-index.html together with the variant list
+                            it was built from (pwa/data/variants.json + embeddings.*)
+  POST /api/eval-result     stores the last dev/eval.html result in build/eval-result.json
 """
 
 import argparse
-import functools
+import hashlib
 import http.server
 import json
 import shutil
@@ -21,28 +23,27 @@ import subprocess
 import sys
 from pathlib import Path
 
-SPIKE_DIR = Path(__file__).resolve().parent
-REPO_ROOT = SPIKE_DIR.parent
+REPO_ROOT = Path(__file__).resolve().parents[2]
+PWA_DIR = REPO_ROOT / "pwa"
+DATA_DIR = PWA_DIR / "data"
 CARDS_DB = REPO_ROOT / "data" / "cards.db"
 IMAGE_DIR = REPO_ROOT / "build" / "carddb-cache" / "images"
 CERT_DIR = REPO_ROOT / "build" / "cert"
-DATA_DIR = SPIKE_DIR / "data"
 EVAL_RESULT = REPO_ROOT / "build" / "eval-result.json"
 
 
-def export_variants():
+def export_variants() -> bytes:
+    """Variant list as compact JSON. Deterministic, so the index page can hash exactly these bytes."""
     db = sqlite3.connect(CARDS_DB)
     rows = db.execute(
-        """SELECT v.exburst_id, v.card_no, c.name, v.rarity, v.image_file, v.image_url
+        """SELECT v.exburst_id, v.card_no, c.name, v.rarity, v.official_id || '.webp'
            FROM variant v JOIN card c ON c.card_no = v.card_no
            ORDER BY v.exburst_id"""
     ).fetchall()
-    keys = ["id", "cardNo", "name", "rarity", "file", "url"]
-    DATA_DIR.mkdir(exist_ok=True)
-    (DATA_DIR / "variants.json").write_text(
-        json.dumps([dict(zip(keys, row)) for row in rows], ensure_ascii=False), encoding="utf-8"
-    )
-    return [row[0] for row in rows]
+    db.close()
+    keys = ["id", "cardNo", "name", "rarity", "file"]
+    variants = [dict(zip(keys, row)) for row in rows]
+    return json.dumps(variants, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
 
 
 def lan_ips():
@@ -88,11 +89,11 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         ".wasm": "application/wasm",
         ".onnx": "application/octet-stream",
         ".webmanifest": "application/manifest+json",
+        ".webp": "image/webp",  # not in the Windows registry everywhere
     }
 
-    def __init__(self, *args, variant_ids, **kwargs):
-        self.variant_ids = variant_ids
-        super().__init__(*args, directory=str(SPIKE_DIR), **kwargs)
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, directory=str(PWA_DIR), **kwargs)
 
     def setup(self):
         # The TLS handshake runs here, in the request thread, so a silent client cannot block
@@ -112,8 +113,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             super().handle()
 
     def end_headers(self):
-        # Cross-origin isolation enables multi-threaded WebAssembly; "credentialless" still
-        # lets <img> load card pictures from the official site.
+        # Same isolation headers the service worker adds on GitHub Pages (multi-threaded wasm).
         self.send_header("Cross-Origin-Opener-Policy", "same-origin")
         self.send_header("Cross-Origin-Embedder-Policy", "credentialless")
         self.send_header("Cache-Control", "no-cache")
@@ -124,28 +124,56 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return str(IMAGE_DIR / Path(path.split("?")[0]).name)
         return super().translate_path(path)
 
+    def do_GET(self):
+        if self.path.split("?")[0] == "/api/variants":
+            self.reply(200, export_variants(), "application/json; charset=utf-8")
+            return
+        super().do_GET()
+
     def do_POST(self):
         route = self.path.split("?")[0]
         body = self.rfile.read(int(self.headers["Content-Length"]))
         if route == "/api/eval-result":
             EVAL_RESULT.parent.mkdir(parents=True, exist_ok=True)
             EVAL_RESULT.write_bytes(body)
-            self.send_response(204)
-            self.end_headers()
-            return
-        if route != "/api/index":
+            self.reply(204)
+        elif route == "/api/index":
+            self.store_index(body)
+        else:
             self.send_error(404)
+
+    def store_index(self, body: bytes):
+        # Body: int8 vectors (count x dim) followed by one float32 scale per vector.
+        variants_json = export_variants()
+        if hashlib.sha256(variants_json).hexdigest() != self.headers.get("X-Variants-Hash"):
+            self.send_error(409, "card database changed while building the index, please run it again")
             return
-        dim = len(body) // 4 // len(self.variant_ids)
-        if dim * 4 * len(self.variant_ids) != len(body):
-            self.send_error(400, "embedding size does not match variant count")
+        count = len(json.loads(variants_json))
+        dim = int(self.headers["X-Dim"])
+        if len(body) != count * dim + count * 4:
+            self.send_error(400, "index size does not match the variant count")
             return
+        DATA_DIR.mkdir(exist_ok=True)
+        (DATA_DIR / "variants.json").write_bytes(variants_json)
         (DATA_DIR / "embeddings.bin").write_bytes(body)
-        (DATA_DIR / "embeddings.json").write_text(
-            json.dumps({"dim": dim, "ids": self.variant_ids}), encoding="utf-8"
-        )
-        self.send_response(204)
+        meta = {
+            "format": "int8-scaled",
+            "count": count,
+            "dim": dim,
+            "variants": hashlib.sha256(variants_json).hexdigest()[:16],
+            "embeddings": hashlib.sha256(body).hexdigest()[:16],
+        }
+        (DATA_DIR / "index.json").write_text(json.dumps(meta, indent=2) + "\n", encoding="utf-8")
+        self.log_message("Stored index: %d variants x %d dims", count, dim)
+        self.reply(204)
+
+    def reply(self, status, body=b"", content_type=None):
+        self.send_response(status)
+        if content_type:
+            self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(body)))
         self.end_headers()
+        self.wfile.write(body)
 
 
 def main():
@@ -155,21 +183,18 @@ def main():
     args = parser.parse_args()
     sys.stdout.reconfigure(line_buffering=True)
 
-    variant_ids = export_variants()
-    print(f"Exported {len(variant_ids)} variants to {DATA_DIR / 'variants.json'}")
-
-    handler = functools.partial(Handler, variant_ids=variant_ids)
     if args.https:
         ips = lan_ips()
-        server = http.server.ThreadingHTTPServer(("0.0.0.0", args.port or 8443), handler)
+        server = http.server.ThreadingHTTPServer(("0.0.0.0", args.port or 8443), Handler)
         context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
         context.load_cert_chain(*ensure_certificate(ips))
         server.socket = context.wrap_socket(server.socket, server_side=True, do_handshake_on_connect=False)
         for ip in ips:
             print(f"Open on your phone: https://{ip}:{server.server_port}/")
     else:
-        server = http.server.ThreadingHTTPServer(("127.0.0.1", args.port or 8000), handler)
+        server = http.server.ThreadingHTTPServer(("127.0.0.1", args.port or 8000), Handler)
         print(f"Open: http://localhost:{server.server_port}/")
+    print(f"Build the index: http://localhost:{server.server_port}/dev/build-index.html")
     server.serve_forever()
 
 

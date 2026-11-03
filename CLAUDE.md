@@ -9,19 +9,24 @@ Der Nutzer kommt aus der Webentwicklung.
 
 1. Mehrere Karten bei laufender Kamera erkennen, Scan beenden → Übersicht → ExBurst-Liste.
 2. Alt Arts in ExBurst-Notation (`GD06-002-ALT1`).
-3. Übersicht mit Bildern der offiziellen GCG-Seite.
+3. Übersicht mit Kartenbildern (ursprünglich: von der offiziellen GCG-Seite; siehe Bildquelle unten).
 4. Preise von CardTrader und/oder Cardmarket anzeigen.
 5. Später: Login bei ExBurst, Binder/Collection wählen, direkt importieren.
 
-## Stand (2. Nov. 2026)
+## Stand (3. Nov. 2026)
 
 - **Kartendatenbank fertig**: `data/cards.db` (committet), erzeugt von `tools/carddb/build_carddb.py`.
   1290 Karten, 2205 Druckvarianten. Details: `tools/carddb/README.md`.
-- **PWA-Machbarkeitstest fertig** in `pwa-spike/` (siehe `pwa-spike/README.md`) und am Handy
-  getestet (2. Nov. 2026, Android, Chrome): **WebGPU ~19 Bilder/s bei ~45 ms Modell**, wasm unter
-  10 Bilder/s bei über 100 ms. Erkennung laut Nutzer „ganz gut, auch mit Sleeves“.
-- **Plattform-Entscheidung offen**, aber die PWA ist nach dem Handy-Test brauchbar (vom Nutzer
-  bevorzugt, Web-Hintergrund). Native Kotlin-App wurde vorgeschlagen, ist nicht angefangen.
+- **Plattform entschieden: PWA** in `pwa/`, veröffentlicht über GitHub Pages
+  (`.github/workflows/pages.yml`). Details und Abläufe: `pwa/README.md`.
+  - Scanner (eine Karte im Rahmen) → *Fertig* → Übersicht `#liste` mit Bildern, Mengen,
+    **Variantenauswahl** und CSV teilen/kopieren/speichern. Liste bleibt in `localStorage`.
+  - Offline-fähig über Service Worker. Kartenbilder von der ExBurst-CDN, dauerhaft im Cache.
+  - Lokal vollständig getestet (simulierte Kamera, Pages-ähnlicher Server ohne Header, offline,
+    Update-Ablauf). **Noch nicht auf GitHub Pages deployt und nicht am Handy getestet.**
+- Vorher (2. Nov.): Machbarkeitstest am Handy (Android, Chrome): **WebGPU ~19 Bilder/s bei ~45 ms
+  Modell**, wasm unter 10 Bilder/s bei über 100 ms. Erkennung laut Nutzer „ganz gut, auch mit Sleeves“.
+- Noch nicht umgesetzt: mehrere Karten gleichzeitig, Preise, ExBurst-Login/Direktimport.
 
 ## Fakten, die schon geprüft sind
 
@@ -30,8 +35,7 @@ Der Nutzer kommt aus der Webentwicklung.
   `data-val="6xxxxx"` im Filter. Detailseite: `detail.php?detailSearch=<official_id>`.
   Bild: `https://www.gundam-gcg.com/en/images/cards/card/<official_id>.webp` (600×837, Alpha-Ecken).
 - **Alt-Art-Notation**: offiziell `_pN`, bei ExBurst `-ALTN`, 1:1 (Stichproben auf exburst.dev:
-  `GD`, `ST`, `EB`, `T-`, `R-`, `RP-`, `EXB-`, `EXR-`, bis `ALT8`). ExBurst verwendet sogar dieselben
-  Bilddateinamen (`cdn.exburst.dev/cards/gundam-en/GD06-002_p1.webp`). ExBurst-Kartenseite:
+  `GD`, `ST`, `EB`, `T-`, `R-`, `RP-`, `EXB-`, `EXR-`, bis `ALT8`). ExBurst-Kartenseite:
   `https://exburst.dev/gundam/cards/<exburst_id>`.
 - **ExBurst-Importformat** (vom Nutzer):
   ```
@@ -41,42 +45,75 @@ Der Nutzer kommt aus der Webentwicklung.
   ```
 - Nummernformate: `GD01-001`, `ST01-001`, `EB01-001`, `T-001` (Token), `R-001`/`RP-001` (Ressource),
   `EXB-001`/`EXBP-001`, `EXR-001`/`EXRP-001`, jeweils optional `_pN`.
+- **Bildquelle**: gundam-gcg.com sendet `Cross-Origin-Resource-Policy: same-site`, die Bilder lassen
+  sich auf fremden Seiten nicht anzeigen. `https://cdn.exburst.dev/cards/gundam-en/<official_id>.webp`
+  (BunnyCDN) sendet `Access-Control-Allow-Origin: *` und cacht 30 Tage. `?width=360` verkleinert
+  serverseitig (69 statt 123 KB). **Alle 2205 Varianten sind dort vorhanden** (am 3. Nov. geprüft).
+  Achtung: Eine `HEAD`-Anfrage liefert andere Header als `GET`; zum Prüfen `GET` verwenden. Es ist
+  ExBursts Bandbreite, daher wird jedes Bild nur einmal pro Handy geladen (Service Worker). Vor
+  intensiver Nutzung bei ExBurst nachfragen.
+- Bandai-Bilder **nicht** selbst auf GitHub Pages hosten: Pages ist öffentlich (auch bei privatem
+  Repo), das wäre eine Weiterverbreitung. Das Repo ist öffentlich (API liefert 200).
 
-## Erkenntnisse aus dem Machbarkeitstest
+## Erkennung
 
-Ansatz: Bildvergleich statt Texterkennung. MobileNetV2 (ONNX Model Zoo, ohne Klassifikator →
-1280-dim-Vektor) im Browser über onnxruntime-web 1.30.0. **Standard-Backend ist überall WebGPU**
-(`DEFAULT_BACKEND` in `pwa-spike/js/embedder.js`). Ohne nutzbare GPU fällt `createEmbedder` automatisch
-auf wasm zurück (4 Threads dank Cross-Origin-Isolation); `?backend=wasm` erzwingt wasm. Kosinus-Ähnlichkeit
-gegen alle 2205 Referenzvektoren, Kartenausschnitt über einen festen Rahmen im oberen Bildteil.
+Bildvergleich statt Texterkennung. MobileNetV2 (ONNX Model Zoo, ohne Klassifikator → 1280-dim-Vektor)
+im Browser über onnxruntime-web 1.30.0. **Standard-Backend ist überall WebGPU**
+(`DEFAULT_BACKEND` in `pwa/js/embedder.js`). Ohne nutzbare GPU fällt `createEmbedder` automatisch
+auf wasm zurück. In der App lässt sich das unter *Einstellungen & Technik* umstellen
+(`localStorage`), `?backend=wasm` erzwingt wasm. Kosinus-Ähnlichkeit gegen alle 2205
+Referenzvektoren, Kartenausschnitt über einen festen Rahmen im oberen Bildteil, Glättung über 500 ms.
 
-Simulierte Kamerabilder (`pwa-spike/eval.html`, je 300 Stück, am PC):
+**Index** (`pwa/data/`, committet, weil nur lokal aus den Kartenbildern erzeugbar):
+`index.json` (Format, Anzahl, Hashes), `variants.json?v=<hash>`, `embeddings.bin?v=<hash>`. Die
+Vektoren sind int8 mit einem float32-Skalierungsfaktor pro Vektor (2,8 MB statt 11 MB), siehe
+`quantize()`/`loadIndex()` in `pwa/js/matcher.js`. Der Dev-Server speichert Kartenliste und Index
+immer zusammen (Hash-Prüfung), daher können sie nicht auseinanderlaufen.
+
+Simulierte Kamerabilder (`pwa/dev/eval.html`, je 300 Stück, am PC). Werte mit int8-Index und WebGPU
+vom 3. Nov.; der float32-Index mit wasm lag gleichauf (schwer: 86,7 / 80,7 / 82,7 / 95 %):
 
 | Stufe | Kartennummer | Variante | Variante oder optisch gleich | Top-5 |
 |---|---|---|---|---|
 | sauber | 100 % | 100 % | 100 % | 100 % |
 | normal | 100 % | 95,7 % | 98,3 % | 100 % |
-| schwer | 86,7 % | 80,7 % | 82,7 % | 95 % |
+| schwer | 87,0 % | 81,0 % | 83,0 % | 95 % |
 
-Geschwindigkeit: ~21 ms pro Bild am PC (wasm). Am Handy siehe „Erkenntnisse aus dem Handy-Test“.
+Geschwindigkeit am PC: WebGPU 7–10 ms pro Bild (~28 Bilder/s im Scanner), wasm ~21 ms.
 
 - **Viele ALT-Nummern sind Nachdrucke derselben Illustration** in anderen Produkten (Deck Build Box
   SC01, Edition Beta, Promos), z. B. `GD01-118` gibt es 9×. Sie unterscheiden sich nur durch Kleinigkeiten
-  (Block-Nummer oben rechts, Folie). 175 Variantenpaare haben eine Ähnlichkeit über 0,95. Das ist per
-  Kamera nicht zuverlässig trennbar → **die Übersicht braucht eine Variantenauswahl**, evtl. mit
+  (Block-Nummer oben rechts, Folie). 175 Variantenpaare haben eine Ähnlichkeit über 0,95
+  (`LOOK_ALIKE` in `matcher.js`). Per Kamera nicht trennbar. **Gelöst in der App:** Der Treffer
+  zeigt „+N gleich aussehende Varianten“, die Übersicht markiert solche Einträge mit „Variante prüfen“,
+  bis der Nutzer im Auswahldialog eine Variante gewählt hat (`checked`). Mögliche Erweiterung:
   Voreinstellung „ich scanne gerade Produkt X“.
 - Zwischen Karten mit verschiedenen Nummern gibt es keine nahezu identischen Referenzbilder.
 - Ähnlich gestaltete Full-Art-Karten (LR+) liegen recht nah beieinander (z. B. 83,9 % gegen 81,5 %).
 - Geplante Verbesserungen: Kartenkanten erkennen und Perspektive entzerren (auch die Basis für
-  mehrere Karten gleichzeitig), Abstimmung über mehrere Bilder, optional Texterkennung der Kartennummer
-  bei knappen Treffern.
-- Ausgeblendete Browser-Tabs drosseln stark, und `requestAnimationFrame` läuft dort nicht → Messungen
-  im Browser-Fenster nur mit sichtbarem Fenster aussagekräftig. Nach einigen Minuten im Hintergrund
-  feuern Timer nur noch etwa einmal pro Minute. Tests im ausgeblendeten Fenster daher ohne
-  `setTimeout`-Wartezeiten bauen, z. B. Kamera-Anfragen manuell auflösen und den Test-Canvas per
-  `track.requestFrame()` neu ausgeben. Ein `captureStream()`-Canvas liefert erst dann ein Bild.
+  mehrere Karten gleichzeitig), optional Texterkennung der Kartennummer bei knappen Treffern.
 
-## Scanner-Robustheit (`pwa-spike/index.html`)
+## PWA-Technik (`pwa/`)
+
+- **Service Worker** (`pwa/sw.js`): Caches `gcg-shell-<VERSION>` (HTML/CSS/JS, vorab geladen),
+  `gcg-assets-v1` (Modell, Runtime, Index; URLs ändern sich mit dem Inhalt) und `gcg-images-v1`
+  (ExBurst-Bilder, für immer). `VERSION = "dev"` → HTML/CSS/JS immer aus dem Netz. Der Pages-Workflow
+  setzt den Commit-SHA ein. Updates warten auf „Neue Version – neu laden“ in der App, dann
+  `skipWaiting`. Die erste Installation übernimmt sofort; die App wartet bis zu 3 s darauf, damit
+  schon der erste Download im Cache landet. Neue Asset-Pfade (z. B. ORT-Version) in
+  `ASSET_PREFIXES` eintragen, sonst löscht `activate` sie.
+- Der Service Worker setzt **COOP/COEP-Header**, die GitHub Pages nicht senden kann. Ab dem zweiten
+  Laden ist die Seite damit `crossOriginIsolated` (nur für Multithread-wasm relevant).
+- Kartenbilder werden mit `crossOrigin="anonymous"` geladen (CORS statt opaque), damit der Service
+  Worker sie prüfen und cachen kann.
+- Erster Besuch lädt ~40 MB (WebGPU-Runtime 26 MB, Modell 8,8 MB, Index 3 MB), danach offline.
+  `navigator.storage.persist()` wird angefragt.
+- Zurück-Taste: Die Übersicht ist `#liste`. Wurde sie aus dem Scanner geöffnet, ist „Zurück“
+  `history.back()`, sonst wird nur der Hash entfernt.
+- In `app.js` steht `await boot()` am Dateiende, sonst greift `boot()` auf noch nicht
+  initialisierte `let`-Variablen zu (TDZ-Fehler).
+
+## Scanner-Robustheit (`pwa/js/app.js`)
 
 - Kamera-Start und -Stopp laufen über einen `generation`-Zähler. Ein überholter Start fasst den
   gemeinsamen Zustand nicht an und gibt seinen Stream selbst frei. Nach jedem `await` wird erneut
@@ -85,41 +122,62 @@ Geschwindigkeit: ~21 ms pro Bild am PC (wasm). Am Handy siehe „Erkenntnisse au
   `getUserMedia`; danach ist kein Stream mehr `live`.
 - Die Erkennungsschleife überspringt einzelne Fehler. Nach 5 Fehlern in Folge stoppt sie die Kamera
   und zeigt die Meldung in der Statuszeile, bei WebGPU mit Hinweis auf wasm.
+- Die Kamera stoppt beim Wechsel zur Übersicht und wenn die App in den Hintergrund geht. Danach
+  läuft sie wieder an.
+- Übernehmen hat eine Sperre von 600 ms gegen Doppeltipps. Ein zweites Exemplar ist ein zweiter Tipp.
+
+## Testen im Browser-Fenster (Claude)
+
+- Ausgeblendete Tabs drosseln stark: `requestAnimationFrame` läuft nicht, und nach einigen Minuten
+  feuern Timer nur noch etwa einmal pro Minute. Zum Testen `window.requestAnimationFrame` durch
+  `setTimeout` ersetzen und Kamera-Anfragen manuell auflösen. `img.decode()` hängt in
+  Hintergrund-Tabs, stattdessen `onload` nutzen. Lazy-Bilder laden dort nicht.
+- Simulierte Kamera: Canvas mit `captureStream(0)`, nach jedem Zeichnen `track.requestFrame()`
+  aufrufen. Ohne neues Bild bleibt `video.play()` hängen.
+- Pages-ähnlicher Test: `pwa/` nach `build/site-test` kopieren, `dev/` entfernen, `VERSION` setzen,
+  mit `python -m http.server 8010 -d build/site-test` ausliefern (ohne COOP/COEP). Offline-Test:
+  den Server stoppen und neu laden.
 
 ## Auf einem neuen Rechner einrichten
 
-Erzeugte oder heruntergeladene Dateien sind **nicht** im Repo (`build/`, `pwa-spike/data|model|vendor`).
-Voraussetzungen: Python 3.11+, Git Bash (für `openssl`). Node ist nicht nötig.
+Nicht im Repo: `build/`, `pwa/model/`, `pwa/vendor/`. Voraussetzungen: Python 3.11+, Git Bash (für
+`openssl`). Node ist nicht nötig.
 
 ```bash
-python tools/carddb/build_carddb.py --details --images   # ~20–35 min; lädt 2205 Bilder (128 MB) in build/carddb-cache
 python -m venv build/venv
 build/venv/Scripts/python -m pip install -r tools/model/requirements.txt
 build/venv/Scripts/python tools/model/prepare_model.py    # lädt MobileNetV2, prüft SHA-256
 python tools/vendor/fetch_ort.py                          # onnxruntime-web 1.30.0 aus dem npm-Tarball, prüft die Integrität
-python pwa-spike/serve.py                                 # dann http://localhost:8000/build-index.html → Start (~6 min)
+python tools/devserver/serve.py                           # App: http://localhost:8000/
 ```
 
-Abkürzung: Wenn `build.zip` (Archiv des `build/`-Ordners vom Arbeitsrechner, nicht im Repo) mitgenommen
-wurde, im Repo-Root entpacken. Danach entfallen die Bilder-Downloads. Die venv darin ist an den alten
-Pfad gebunden und sollte neu erstellt werden.
+Das reicht für die App, der Index ist committet. Nur zum Neubauen des Index bzw. für `dev/eval.html`
+braucht es die Kartenbilder lokal (`build_carddb.py --details --images`, ~20–35 min, 128 MB in
+`build/carddb-cache`; oder `build.zip` vom Arbeitsrechner im Repo-Root entpacken).
 
-Handy-Test: `python pwa-spike/serve.py --https` → angezeigte `https://<LAN-IP>:8443/` in Chrome öffnen,
+Handy-Test lokal: `python tools/devserver/serve.py --https` → `https://<LAN-IP>:8443/` in Chrome öffnen,
 Zertifikatswarnung bestätigen, ggf. Python in der Windows-Firewall erlauben. Das Zertifikat liegt in
 `build/cert/` und enthält die IPs vom Zeitpunkt der Erzeugung. Bei neuer IP `build/cert/` löschen.
 Erreicht Chrome am Handy den PC nicht (auch nicht die FritzBox), fehlt Chrome die Android-Berechtigung
 „Geräte in der Nähe“ (Zugriff aufs lokale Netz). Firefox braucht sie nicht. Kommt eine Anfrage an,
 steht sie im Server-Log, auch ein abgelehntes Zertifikat (`TLS handshake failed`).
 
-## Erkenntnisse aus dem Handy-Test
+## GitHub Pages
 
-- WebGPU ist am Handy gut 2× schneller als wasm → als Standard-Backend nehmen.
+- Workflow `.github/workflows/pages.yml`: holt ORT und Modell (mit Prüfsummen), setzt `VERSION` in
+  `sw.js`, veröffentlicht `pwa/` ohne `dev/`. Actions sind auf Commit-SHAs gepinnt (checkout v7.0.1,
+  setup-python v7.0.0, configure-pages v6.0.0, upload-pages-artifact v5.0.0, deploy-pages v5.0.1).
+- Einmalig nötig (durch den Nutzer): Repo → Settings → Pages → Source: **GitHub Actions**.
+- URL: `https://somecoder3.github.io/GCGScanner/`. Alle Pfade in der App sind relativ.
+
+## Erkenntnisse aus dem Handy-Test (Machbarkeitstest)
+
+- WebGPU ist am Handy gut 2× schneller als wasm → Standard-Backend.
 - Das Handy hat zwei Rückkameras; die automatisch gewählte war dauerhaft unscharf. Der Scanner hat
   deshalb eine Objektivauswahl (gespeichert), dazu Dauer-Autofokus, Tippen zum Fokussieren und Zoom.
 - Nutzerwunsch: nur **ein** Treffer, groß und lesbar, über 500 ms geglättet; Kamera an/aus; alles
   ohne Scrollen auf einem Bildschirm.
-- Noch offen: Trefferquote genauer messen (Folienkarten, Licht), und wie die Variantenauswahl
-  (Nachdrucke derselben Illustration) in der Übersicht aussehen soll.
+- Noch offen: Trefferquote genauer messen (Folienkarten, Licht).
 
 ## Offene Punkte / noch nicht recherchiert
 
@@ -128,24 +186,15 @@ steht sie im Server-Log, auch ein abgelehntes Zertifikat (`TLS handshake failed`
   Token-Schutz einen kleinen Proxy (z. B. einen Cloudflare Worker).
 - ExBurst-Login und Import: keine offizielle API bekannt. Lieber die ExBurst-Entwickler fragen, statt
   die interne API nachzubauen. Aus einer PWA ginge es ebenfalls nur über einen Proxy.
-- Kartenbilder gehören Bandai: für privaten Gebrauch ok, nicht öffentlich mit ausliefern.
-  **Direkt einbinden geht nicht**: gundam-gcg.com sendet `Cross-Origin-Resource-Policy: same-site`,
-  Browser zeigen die Bilder auf fremden Seiten nicht an. Der Spike nimmt deshalb die lokalen Kopien
-  über `/ref-images/` vom Dev-Server. Für eine echte PWA braucht es einen Proxy oder eine andere Quelle.
-  **Funktionierende Alternative:** `cdn.exburst.dev/cards/gundam-en/<official_id>.webp` sendet
-  `Access-Control-Allow-Origin: *`, verwendet dieselben Dateinamen und cacht 30 Tage. Das ist
-  allerdings ExBursts Bandbreite; vor intensiver Nutzung bei ExBurst nachfragen. Die Bilder selbst
-  auf GitHub Pages zu hosten wäre eine öffentliche Weiterverbreitung der Bandai-Bilder (Pages ist
-  auch bei privatem Repo öffentlich) → nicht gewollt. Variante dazu: App auf Pages, Bilder beim
-  ersten Anzeigen von der ExBurst-CDN laden und im Service-Worker-Cache halten.
+- Den genauen Menüpfad des ExBurst-Collection-Imports hat Claude nicht geprüft.
 
 ## Konventionen
 
 - **Diese CLAUDE.md immer aktuell halten** (Wunsch des Nutzers): Nach jeder relevanten Änderung,
   Erkenntnis oder Entscheidung hier nachtragen und veraltete Aussagen korrigieren, im selben Commit.
-
 - Abhängigkeiten exakt pinnen und Versionen gegen die Registry prüfen; keine Version unter
-  2 Wochen Alter verwenden. Python-Werkzeuge möglichst nur mit der Standardbibliothek.
-- Datenbank-Neuaufbau nach einem neuen Set: `build_carddb.py --details --images --refresh`, danach
-  `build-index.html` erneut ausführen. Der Index muss zur Reihenfolge in `variants.json` passen; der
-  Server erzeugt `variants.json` bei jedem Start neu.
+  2 Wochen Alter verwenden (gilt auch für GitHub Actions, per Commit-SHA). Python-Werkzeuge möglichst
+  nur mit der Standardbibliothek.
+- Neues Set: `build_carddb.py --details --images --refresh`, Dev-Server starten,
+  `http://localhost:8000/dev/build-index.html` → Start, dann `data/cards.db` und `pwa/data/` committen.
+- Icons: `build/venv/Scripts/python tools/icons/make_icons.py` (braucht numpy aus der venv).

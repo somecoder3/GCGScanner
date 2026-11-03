@@ -1,4 +1,4 @@
-"""Copy the onnxruntime-web runtime files into pwa-spike/vendor/.
+"""Copy the onnxruntime-web runtime files into pwa/vendor/.
 
 Downloads the pinned npm tarball, checks it against the registry's sha512
 integrity value and extracts only the files the scanner loads. Serving them from
@@ -29,7 +29,7 @@ FILES = [
 ]
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-TARGET = REPO_ROOT / "pwa-spike" / "vendor" / f"{PACKAGE}-{VERSION}"
+TARGET = REPO_ROOT / "pwa" / "vendor" / f"{PACKAGE}-{VERSION}"
 
 
 def main():

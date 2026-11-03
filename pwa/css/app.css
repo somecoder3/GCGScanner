@@ -1,0 +1,111 @@
+/* App layout on top of style.css (shared with the dev pages). */
+
+body { padding: 0; overscroll-behavior: none; }
+.view { width: 100%; max-width: 640px; margin: 0 auto; padding: 8px 8px calc(16px + env(safe-area-inset-bottom)); }
+.screen { display: flex; flex-direction: column; height: 100dvh; min-height: 480px; max-height: 1060px; }
+.small { font-size: 13px; }
+
+.bar { display: flex; align-items: center; gap: 8px; min-height: 40px; margin-bottom: 8px; }
+.bar h1 { margin: 0; font-size: 18px; white-space: nowrap; flex: 1; }
+.update { font-size: 13px; color: var(--warn); }
+button.link { padding: 0; border: 0; background: none; color: var(--accent); text-decoration: underline; }
+button.icon { width: 40px; height: 40px; padding: 0; font-size: 26px; line-height: 1; flex: none; }
+button.wide { width: 100%; margin-top: 8px; }
+button.danger { border-color: var(--bad); color: var(--bad); }
+
+/* ---- Scanner -------------------------------------------------------------------------------- */
+
+.viewer {
+  position: relative; flex: 1; min-height: 0;
+  background: #000; border-radius: 10px; overflow: hidden;
+  container-type: size; touch-action: manipulation; user-select: none;
+}
+.viewer video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+/* Card guide: 63 x 88 mm aspect, in the upper part above the HUD. guideRegion() crops exactly this box. */
+.guide {
+  position: absolute; left: 50%; top: 5cqh; transform: translateX(-50%);
+  height: min(58cqh, 128cqw); aspect-ratio: 63 / 88;
+  border: 3px solid var(--warn); border-radius: 10px;
+  box-shadow: 0 0 0 100vmax rgba(0, 0, 0, 0.45);
+  transition: border-color 0.15s; pointer-events: none;
+}
+.guide.stable { border-color: var(--ok); }
+.top { position: absolute; left: 8px; right: 8px; top: 6px; display: flex; gap: 8px; align-items: center; }
+.stats { flex: 1; font-size: 12px; color: #fff; text-shadow: 0 0 3px #000; }
+.top select { padding: 4px 6px; font-size: 12px; max-width: 45%; }
+.zoom {
+  position: absolute; left: 12px; right: 12px; top: 5cqh; margin-top: calc(min(58cqh, 128cqw) + 6px);
+  display: flex; gap: 8px; align-items: center; font-size: 12px; color: #fff;
+}
+.zoom input { flex: 1; }
+.focus-ring {
+  position: absolute; width: 56px; height: 56px; margin: -28px 0 0 -28px;
+  border: 2px solid #fff; border-radius: 50%; pointer-events: none; animation: ring 0.8s ease-out forwards;
+}
+@keyframes ring { from { transform: scale(1.4); opacity: 1; } to { transform: scale(1); opacity: 0; } }
+
+.hud { position: absolute; left: 0; right: 0; bottom: 0; padding: 24px 8px 8px; background: linear-gradient(transparent, rgba(0, 0, 0, 0.8) 24px); }
+/* One large hit: tapping it adds the card, like the button. */
+.hit {
+  display: flex; gap: 10px; align-items: center; width: 100%; min-height: 84px; margin-bottom: 8px; padding: 6px;
+  text-align: left; border: 2px solid transparent; background: rgba(28, 33, 40, 0.9);
+}
+.hit.stable { border-color: var(--ok); }
+.hit img, .hit .noimg { width: 52px; flex: none; }
+.hit div { min-width: 0; }
+.hit b { display: block; font-size: 16px; }
+.hit .name { display: block; font-size: 14px; }
+.hit .score { color: var(--muted); font-size: 13px; }
+.hit .alike { display: block; color: var(--warn); font-size: 12px; }
+.actions { display: flex; gap: 6px; }
+.actions button { flex: 1; padding: 10px 6px; }
+
+/* ---- Card images ---------------------------------------------------------------------------- */
+
+.card-img { aspect-ratio: 63 / 88; border-radius: 4px; display: block; background: #2a3038; object-fit: cover; }
+.noimg {
+  aspect-ratio: 63 / 88; border-radius: 4px; background: #2a3038; color: var(--muted);
+  display: flex; align-items: center; justify-content: center; text-align: center; font-size: 10px; padding: 2px;
+}
+
+/* ---- Overview ------------------------------------------------------------------------------- */
+
+.hint { background: rgba(255, 183, 77, 0.12); border: 1px solid var(--warn); border-radius: 8px; padding: 8px 10px; margin: 0 0 8px; font-size: 14px; }
+.items { display: flex; flex-direction: column; }
+.item { display: flex; gap: 10px; align-items: center; padding: 8px 0; border-bottom: 1px solid #2a3038; }
+.item .thumb { width: 56px; flex: none; padding: 0; border: 0; background: none; }
+.item .info { flex: 1; min-width: 0; }
+.item .info b { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.item .info small { display: block; color: var(--muted); }
+.item .variant-btn { margin-top: 4px; padding: 3px 8px; font-size: 12px; }
+.item .variant-btn.check { border-color: var(--warn); color: var(--warn); }
+.qty { display: flex; align-items: center; gap: 6px; flex: none; }
+.qty button { width: 36px; height: 36px; padding: 0; font-size: 18px; }
+.qty b { min-width: 20px; text-align: center; }
+.empty { text-align: center; padding: 24px 8px; }
+.export { display: flex; gap: 6px; margin-top: 16px; }
+.export button { flex: 1; padding: 10px 6px; }
+.tech { margin-top: 20px; color: var(--muted); font-size: 14px; }
+.tech summary { cursor: pointer; padding: 6px 0; }
+.tech label { display: flex; gap: 8px; align-items: center; margin: 8px 0; }
+
+/* ---- Variant picker ------------------------------------------------------------------------- */
+
+dialog {
+  width: min(600px, calc(100vw - 16px)); max-height: calc(100dvh - 32px); padding: 12px;
+  background: var(--bg); color: var(--text); border: 1px solid #3a424d; border-radius: 12px;
+}
+dialog::backdrop { background: rgba(0, 0, 0, 0.6); }
+.dialog-head { display: flex; align-items: center; gap: 8px; }
+.dialog-head h2 { flex: 1; margin: 0; }
+.variant-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(100px, 1fr)); gap: 8px; }
+.variant-grid button { padding: 4px; text-align: left; font-size: 12px; border: 2px solid transparent; }
+.variant-grid button.current { border-color: var(--accent); }
+.variant-grid b { display: block; margin-top: 4px; }
+.variant-grid .alike { color: var(--warn); }
+
+.toast {
+  position: fixed; left: 50%; bottom: calc(24px + env(safe-area-inset-bottom)); transform: translateX(-50%);
+  background: var(--panel); border: 1px solid #3a424d; border-radius: 8px; padding: 8px 14px; z-index: 10;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+}

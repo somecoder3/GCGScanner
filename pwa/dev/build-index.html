@@ -4,12 +4,13 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Referenz-Index bauen</title>
-  <link rel="stylesheet" href="css/style.css">
+  <link rel="stylesheet" href="../css/style.css">
 </head>
 <body>
   <h1>Referenz-Index bauen</h1>
   <p class="muted">Berechnet für jede Kartenvariante den Merkmalsvektor aus dem lokalen Bild und speichert
-    ihn über den Dev-Server in <code>data/embeddings.bin</code>. Nur am PC nötig, nach jeder neuen Kartendatenbank.</p>
+    ihn zusammen mit der Kartenliste über den Dev-Server in <code>pwa/data/</code>. Nur am PC nötig, nach
+    jeder neuen Kartendatenbank. Danach <code>pwa/data/</code> committen.</p>
   <div class="row">
     <label>Backend <select id="backend"><option>webgpu</option><option>wasm</option></select></label>
     <button id="start" class="primary">Start</button>
@@ -20,7 +21,8 @@
   </div>
 
   <script type="module">
-    import { createEmbedder, loadImage } from "./js/embedder.js";
+    import { createEmbedder, loadImage } from "../js/embedder.js";
+    import { quantize } from "../js/matcher.js";
 
     const status = document.getElementById("status");
     const progress = document.getElementById("progress");
@@ -28,28 +30,38 @@
     document.getElementById("start").addEventListener("click", async (event) => {
       event.target.disabled = true;
       try {
-        const variants = await fetch("data/variants.json").then((r) => r.json());
+        // The server only accepts the index for exactly this variant list (checked by hash).
+        const variantsText = await fetch("/api/variants").then((r) => r.text());
+        const variantsHash = [...new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(variantsText)))]
+          .map((b) => b.toString(16).padStart(2, "0")).join("");
+        const variants = JSON.parse(variantsText);
         const embedder = await createEmbedder({ backend: document.getElementById("backend").value });
         status.textContent = `Modell geladen (${embedder.backend}, ${embedder.threads} Threads).`;
         progress.max = variants.length;
 
         const started = performance.now();
-        let vectors = null;
+        let vectors = null, dim = 0;
         for (const [i, variant] of variants.entries()) {
-          const image = await loadImage(`ref-images/${variant.file}`);
+          const image = await loadImage(`/ref-images/${variant.file}`);
           const vector = await embedder.embed(image);
-          vectors ??= new Float32Array(variants.length * vector.length);
-          vectors.set(vector, i * vector.length);
+          dim = vector.length;
+          vectors ??= new Float32Array(variants.length * dim);
+          vectors.set(vector, i * dim);
           if (i % 25 === 0 || i === variants.length - 1) {
             progress.value = i + 1;
             const ms = (performance.now() - started) / (i + 1);
             status.textContent = `${i + 1}/${variants.length} – ${ms.toFixed(1)} ms pro Karte`;
           }
         }
-        const response = await fetch("api/index", { method: "POST", body: vectors.buffer });
+        const body = quantize(vectors, variants.length, dim);
+        const response = await fetch("/api/index", {
+          method: "POST",
+          headers: { "X-Variants-Hash": variantsHash, "X-Dim": String(dim) },
+          body,
+        });
         if (!response.ok) throw new Error(`Speichern fehlgeschlagen: ${response.status} ${response.statusText}`);
         const seconds = ((performance.now() - started) / 1000).toFixed(0);
-        status.textContent += `\nFertig nach ${seconds} s, ${(vectors.byteLength / 1e6).toFixed(1)} MB gespeichert.`;
+        status.textContent += `\nFertig nach ${seconds} s, ${(body.byteLength / 1e6).toFixed(1)} MB gespeichert.`;
         status.dataset.done = "true";
       } catch (error) {
         status.textContent = `Fehler: ${error.message}`;
