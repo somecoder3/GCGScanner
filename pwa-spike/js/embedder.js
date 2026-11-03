@@ -10,11 +10,28 @@ const STD = [0.229, 0.224, 0.225];
 // Reference images have transparent rounded corners; fill them the same way for every input.
 const BACKGROUND = "#808080";
 
-export async function createEmbedder({ backend = "wasm" } = {}) {
+// WebGPU was about twice as fast as wasm on the test phone, so it is the default wherever available.
+export const DEFAULT_BACKEND = self.navigator?.gpu ? "webgpu" : "wasm";
+
+async function createSession(backend) {
   const ort = await import(ORT_DIR + (backend === "webgpu" ? "ort.webgpu.min.mjs" : "ort.wasm.min.mjs"));
   ort.env.wasm.wasmPaths = ORT_DIR;
   ort.env.wasm.numThreads = self.crossOriginIsolated ? Math.min(4, navigator.hardwareConcurrency || 1) : 1;
   const session = await ort.InferenceSession.create(MODEL_URL, { executionProviders: [backend] });
+  return { ort, session };
+}
+
+export async function createEmbedder({ backend = DEFAULT_BACKEND } = {}) {
+  let ort, session;
+  try {
+    ({ ort, session } = await createSession(backend));
+  } catch (error) {
+    // No usable GPU (old browser, blocklisted driver): fall back to the CPU backend instead of failing.
+    if (backend !== "webgpu") throw error;
+    console.warn("WebGPU nicht verfügbar, nutze wasm", error);
+    backend = "wasm";
+    ({ ort, session } = await createSession(backend));
+  }
 
   const canvas = new OffscreenCanvas(INPUT_SIZE, INPUT_SIZE);
   const ctx = canvas.getContext("2d", { willReadFrequently: true });

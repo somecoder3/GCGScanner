@@ -45,8 +45,10 @@ Der Nutzer kommt aus der Webentwicklung.
 ## Erkenntnisse aus dem Machbarkeitstest
 
 Ansatz: Bildvergleich statt Texterkennung. MobileNetV2 (ONNX Model Zoo, ohne Klassifikator →
-1280-dim-Vektor) im Browser über onnxruntime-web 1.30.0 (WASM, 4 Threads). Kosinus-Ähnlichkeit
-gegen alle 2205 Referenzvektoren, Kartenausschnitt über einen festen Rahmen in der Bildmitte.
+1280-dim-Vektor) im Browser über onnxruntime-web 1.30.0. **Standard-Backend ist überall WebGPU**
+(`DEFAULT_BACKEND` in `pwa-spike/js/embedder.js`). Ohne nutzbare GPU fällt `createEmbedder` automatisch
+auf wasm zurück (4 Threads dank Cross-Origin-Isolation); `?backend=wasm` erzwingt wasm. Kosinus-Ähnlichkeit
+gegen alle 2205 Referenzvektoren, Kartenausschnitt über einen festen Rahmen im oberen Bildteil.
 
 Simulierte Kamerabilder (`pwa-spike/eval.html`, je 300 Stück, am PC):
 
@@ -56,7 +58,7 @@ Simulierte Kamerabilder (`pwa-spike/eval.html`, je 300 Stück, am PC):
 | normal | 100 % | 95,7 % | 98,3 % | 100 % |
 | schwer | 86,7 % | 80,7 % | 82,7 % | 95 % |
 
-~21 ms pro Bild am PC; Handy noch unbekannt (Schätzung: 3–5× langsamer).
+Geschwindigkeit: ~21 ms pro Bild am PC (wasm). Am Handy siehe „Erkenntnisse aus dem Handy-Test“.
 
 - **Viele ALT-Nummern sind Nachdrucke derselben Illustration** in anderen Produkten (Deck Build Box
   SC01, Edition Beta, Promos), z. B. `GD01-118` gibt es 9×. Sie unterscheiden sich nur durch Kleinigkeiten
@@ -69,7 +71,20 @@ Simulierte Kamerabilder (`pwa-spike/eval.html`, je 300 Stück, am PC):
   mehrere Karten gleichzeitig), Abstimmung über mehrere Bilder, optional Texterkennung der Kartennummer
   bei knappen Treffern.
 - Ausgeblendete Browser-Tabs drosseln stark, und `requestAnimationFrame` läuft dort nicht → Messungen
-  im Browser-Fenster nur mit sichtbarem Fenster aussagekräftig.
+  im Browser-Fenster nur mit sichtbarem Fenster aussagekräftig. Nach einigen Minuten im Hintergrund
+  feuern Timer nur noch etwa einmal pro Minute. Tests im ausgeblendeten Fenster daher ohne
+  `setTimeout`-Wartezeiten bauen, z. B. Kamera-Anfragen manuell auflösen und den Test-Canvas per
+  `track.requestFrame()` neu ausgeben. Ein `captureStream()`-Canvas liefert erst dann ein Bild.
+
+## Scanner-Robustheit (`pwa-spike/index.html`)
+
+- Kamera-Start und -Stopp laufen über einen `generation`-Zähler. Ein überholter Start fasst den
+  gemeinsamen Zustand nicht an und gibt seinen Stream selbst frei. Nach jedem `await` wird erneut
+  geprüft. `cameraOn` gilt ab Beginn des Starts, daher bricht ein zweiter Tipp während der
+  Kamera-Freigabe den Start ab. Getestet: zwei Starts in vertauschter Reihenfolge, Abbruch während
+  `getUserMedia`; danach ist kein Stream mehr `live`.
+- Die Erkennungsschleife überspringt einzelne Fehler. Nach 5 Fehlern in Folge stoppt sie die Kamera
+  und zeigt die Meldung in der Statuszeile, bei WebGPU mit Hinweis auf wasm.
 
 ## Auf einem neuen Rechner einrichten
 
@@ -117,8 +132,17 @@ steht sie im Server-Log, auch ein abgelehntes Zertifikat (`TLS handshake failed`
   **Direkt einbinden geht nicht**: gundam-gcg.com sendet `Cross-Origin-Resource-Policy: same-site`,
   Browser zeigen die Bilder auf fremden Seiten nicht an. Der Spike nimmt deshalb die lokalen Kopien
   über `/ref-images/` vom Dev-Server. Für eine echte PWA braucht es einen Proxy oder eine andere Quelle.
+  **Funktionierende Alternative:** `cdn.exburst.dev/cards/gundam-en/<official_id>.webp` sendet
+  `Access-Control-Allow-Origin: *`, verwendet dieselben Dateinamen und cacht 30 Tage. Das ist
+  allerdings ExBursts Bandbreite; vor intensiver Nutzung bei ExBurst nachfragen. Die Bilder selbst
+  auf GitHub Pages zu hosten wäre eine öffentliche Weiterverbreitung der Bandai-Bilder (Pages ist
+  auch bei privatem Repo öffentlich) → nicht gewollt. Variante dazu: App auf Pages, Bilder beim
+  ersten Anzeigen von der ExBurst-CDN laden und im Service-Worker-Cache halten.
 
 ## Konventionen
+
+- **Diese CLAUDE.md immer aktuell halten** (Wunsch des Nutzers): Nach jeder relevanten Änderung,
+  Erkenntnis oder Entscheidung hier nachtragen und veraltete Aussagen korrigieren, im selben Commit.
 
 - Abhängigkeiten exakt pinnen und Versionen gegen die Registry prüfen; keine Version unter
   2 Wochen Alter verwenden. Python-Werkzeuge möglichst nur mit der Standardbibliothek.

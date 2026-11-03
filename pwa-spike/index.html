@@ -57,7 +57,7 @@
   <div class="screen">
   <div class="row controls" style="flex-wrap: nowrap">
     <h1 style="margin:0; font-size:18px; white-space:nowrap">GCG Scanner</h1>
-    <label class="muted">Backend <select id="backend" style="padding:4px 8px"><option>wasm</option><option>webgpu</option></select></label>
+    <label class="muted">Backend <select id="backend" style="padding:4px 8px"><option>webgpu</option><option>wasm</option></select></label>
   </div>
 
   <div class="viewer" id="viewer">
@@ -91,7 +91,7 @@
   </div>
 
   <script type="module">
-    import { createEmbedder } from "./js/embedder.js";
+    import { createEmbedder, DEFAULT_BACKEND } from "./js/embedder.js";
     import { loadIndex, search } from "./js/matcher.js";
 
     const $ = (id) => document.getElementById(id);
@@ -99,8 +99,7 @@
     const guide = $("guide");
     const stats = $("stats");
     const params = new URLSearchParams(location.search);
-    // WebGPU was about twice as fast as wasm on the test phone, so it is the default where available.
-    const backend = params.get("backend") ?? (navigator.gpu ? "webgpu" : "wasm");
+    const backend = params.get("backend") ?? DEFAULT_BACKEND;
     $("backend").value = backend;
     $("backend").addEventListener("change", (e) => {
       params.set("backend", e.target.value);
@@ -123,6 +122,7 @@
 
     try {
       [index, embedder] = await Promise.all([loadIndex(), createEmbedder({ backend })]);
+      $("backend").value = embedder.backend; // shows the wasm fallback if WebGPU failed
       stats.textContent = `${index.variants.length} Varianten · ${embedder.backend} · ${embedder.threads} Threads`;
     } catch (error) {
       stats.textContent = `Fehler: ${error.message}`;
@@ -131,7 +131,9 @@
 
     // ---- Camera ---------------------------------------------------------------------------------
 
-    $("camera").addEventListener("click", () => (stream ? stopCamera() : startCamera()));
+    // cameraOn is set as soon as a start begins, so a second tap while waiting for the camera cancels it.
+    let cameraOn = false;
+    $("camera").addEventListener("click", () => (cameraOn ? stopCamera() : startCamera()));
     $("lens").addEventListener("change", (e) => {
       try { localStorage.setItem(LENS_KEY, e.target.value); } catch {}
       startCamera();
@@ -139,35 +141,50 @@
     // Free the camera when the page goes to the background.
     document.addEventListener("visibilitychange", () => document.hidden && stream && stopCamera());
 
+    // Every start or stop bumps `generation`. A start that has been overtaken while awaiting must not
+    // touch the shared state: the newer start (or the stop) owns it.
     async function startCamera() {
       stopCamera();
       const gen = ++generation;
+      const isCurrent = () => gen === generation;
+      cameraOn = true;
+      $("camera").textContent = "Kamera stoppen";
+      $("camera").classList.remove("primary");
       let lens = null;
       try { lens = localStorage.getItem(LENS_KEY); } catch {}
       const size = { width: { ideal: 1920 }, height: { ideal: 1080 } };
+      let media = null;
       try {
         try {
-          stream = await navigator.mediaDevices.getUserMedia({
+          media = await navigator.mediaDevices.getUserMedia({
             audio: false,
             video: lens ? { deviceId: { exact: lens }, ...size } : { facingMode: { ideal: "environment" }, ...size },
           });
         } catch (error) {
-          if (!lens) throw error;
+          if (!lens || !isCurrent()) throw error;
           // The saved lens is gone (other phone, camera unplugged): fall back to the default back camera.
           try { localStorage.removeItem(LENS_KEY); } catch {}
-          stream = await navigator.mediaDevices.getUserMedia({ audio: false, video: { facingMode: { ideal: "environment" }, ...size } });
+          media = await navigator.mediaDevices.getUserMedia({ audio: false, video: { facingMode: { ideal: "environment" }, ...size } });
         }
-        if (gen !== generation) return stream.getTracks().forEach((t) => t.stop());
+        if (!isCurrent()) return media.getTracks().forEach((t) => t.stop());
+        // From here on stopCamera() releases this stream, so an overtaken start can simply return.
+        stream = media;
         track = stream.getVideoTracks()[0];
         video.srcObject = stream;
         await video.play();
+        if (!isCurrent()) return;
         await setupFocus();
+        if (!isCurrent()) return;
         setupZoom();
         await fillLensList();
-        $("camera").textContent = "Kamera stoppen";
-        $("camera").classList.remove("primary");
+        if (!isCurrent()) return;
         loop(gen);
       } catch (error) {
+        if (!isCurrent()) {
+          // Overtaken: release a stream that never made it into the shared state, leave the rest alone.
+          if (media && media !== stream) media.getTracks().forEach((t) => t.stop());
+          return;
+        }
         stopCamera();
         stats.textContent = `Kamera nicht verfügbar: ${error.message}`;
       }
@@ -175,6 +192,7 @@
 
     function stopCamera() {
       generation++;
+      cameraOn = false;
       stream?.getTracks().forEach((t) => t.stop());
       stream = track = null;
       video.srcObject = null;
@@ -265,11 +283,30 @@
 
     // ---- Recognition ----------------------------------------------------------------------------
 
+    // Single failures (e.g. a frame that is not ready yet) are skipped; after this many in a row the
+    // scan stops with a message instead of freezing silently (e.g. lost WebGPU device).
+    const MAX_ERRORS = 5;
+
     async function loop(gen) {
-      let frames = 0, windowStart = performance.now(), inferenceMs = 0;
+      let frames = 0, windowStart = performance.now(), inferenceMs = 0, errors = 0;
       while (gen === generation) {
         const t0 = performance.now();
-        const vector = await embedder.embed(video, guideRegion());
+        let vector;
+        try {
+          vector = await embedder.embed(video, guideRegion());
+          errors = 0;
+        } catch (error) {
+          if (gen !== generation) break;
+          console.error("Erkennung fehlgeschlagen", error);
+          if (++errors >= MAX_ERRORS) {
+            stopCamera();
+            const hint = embedder.backend === "webgpu" ? " – ggf. Backend auf wasm umstellen." : "";
+            stats.textContent = `Erkennung abgebrochen: ${error.message}${hint}`;
+            break;
+          }
+          await new Promise((resolve) => setTimeout(resolve, 100));
+          continue;
+        }
         const t1 = performance.now();
         if (gen !== generation) break;
         current = smooth(t1, search(index, vector, SEARCH_K));

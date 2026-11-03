@@ -43,7 +43,8 @@ python pwa-spike/serve.py
 | `build-index.html` | Referenz-Index aus den lokalen Kartenbildern berechnen (nur PC) |
 | `eval.html` | Trefferquote mit simulierten Kamerabildern messen (nur PC) |
 
-`?backend=webgpu` an die URL hängen, um WebGPU statt WebAssembly zu testen.
+Standard ist WebGPU (am Handy gut 2× schneller); ohne nutzbare GPU fällt die Seite automatisch auf
+WebAssembly zurück. `?backend=wasm` an die URL hängen, um WebAssembly zu erzwingen.
 
 ## Am Handy testen
 
