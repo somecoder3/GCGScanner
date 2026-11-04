@@ -163,25 +163,30 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self.send_error(404)
 
     def store_index(self, body: bytes):
-        # Body: int8 vectors (count x dim) followed by one float32 scale per vector.
+        # Body: int8 vectors (count x dim) followed by one float32 scale per vector, then the same
+        # vectors as plain float32 (the full index, selectable in the app for comparison).
         variants_json = export_variants()
         if hashlib.sha256(variants_json).hexdigest() != self.headers.get("X-Variants-Hash"):
             self.send_error(409, "card database changed while building the index, please run it again")
             return
         count = len(json.loads(variants_json))
         dim = int(self.headers["X-Dim"])
-        if len(body) != count * dim + count * 4:
+        compact_size = count * dim + count * 4
+        if len(body) != compact_size + count * dim * 4:
             self.send_error(400, "index size does not match the variant count")
             return
+        compact, full = body[:compact_size], body[compact_size:]
         DATA_DIR.mkdir(exist_ok=True)
         (DATA_DIR / "variants.json").write_bytes(variants_json)
-        (DATA_DIR / "embeddings.bin").write_bytes(body)
+        (DATA_DIR / "embeddings.bin").write_bytes(compact)
+        (DATA_DIR / "embeddings-full.bin").write_bytes(full)
         meta = {
             "format": "int8-scaled",
             "count": count,
             "dim": dim,
             "variants": hashlib.sha256(variants_json).hexdigest()[:16],
-            "embeddings": hashlib.sha256(body).hexdigest()[:16],
+            "embeddings": hashlib.sha256(compact).hexdigest()[:16],
+            "full": hashlib.sha256(full).hexdigest()[:16],
         }
         (DATA_DIR / "index.json").write_text(json.dumps(meta, indent=2) + "\n", encoding="utf-8")
         self.log_message("Stored index: %d variants x %d dims", count, dim)

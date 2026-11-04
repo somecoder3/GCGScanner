@@ -26,15 +26,18 @@ const SHELL = [
   "css/app.css",
   "js/app.js",
   "js/collection.js",
+  "js/detector.js",
+  "js/detector-worker.js",
   "js/embedder.js",
   "js/imagepack.js",
   "js/images.js",
   "js/matcher.js",
+  "js/rectify.js",
   "icons/icon-192.png",
   "icons/icon-512.png",
 ];
 // Asset paths in use by this version; anything else in ASSET_CACHE is an old version and removed.
-const ASSET_PREFIXES = ["vendor/onnxruntime-web-1.30.0/", "model/mobilenetv2-features.onnx", "data/"];
+const ASSET_PREFIXES = ["vendor/onnxruntime-web-1.30.0/", "vendor/opencv-4.12.0/", "model/mobilenetv2-features.onnx", "data/"];
 
 const scope = new URL(self.registration.scope);
 const local = (path) => new URL(path, scope).href;

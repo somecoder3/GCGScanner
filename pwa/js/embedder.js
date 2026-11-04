@@ -38,29 +38,49 @@ export async function createEmbedder({ backend = DEFAULT_BACKEND } = {}) {
   const input = new Float32Array(3 * INPUT_SIZE * INPUT_SIZE);
   const plane = INPUT_SIZE * INPUT_SIZE;
 
+  // RGBA pixels (INPUT_SIZE²) → normalized model input at `offset` in `target`.
+  function fill(target, offset, data) {
+    for (let i = 0; i < plane; i++) {
+      target[offset + i] = (data[i * 4] / 255 - MEAN[0]) / STD[0];
+      target[offset + plane + i] = (data[i * 4 + 1] / 255 - MEAN[1]) / STD[1];
+      target[offset + 2 * plane + i] = (data[i * 4 + 2] / 255 - MEAN[2]) / STD[2];
+    }
+  }
+
+  async function run(data, count) {
+    const tensor = new ort.Tensor("float32", data, [count, 3, INPUT_SIZE, INPUT_SIZE]);
+    const output = await session.run({ [session.inputNames[0]]: tensor });
+    const all = output[session.outputNames[0]].data;
+    const dim = all.length / count;
+    return [...Array(count)].map((_, n) => {
+      const vector = Float32Array.from(all.subarray(n * dim, (n + 1) * dim));
+      let norm = 0;
+      for (const value of vector) norm += value * value;
+      norm = Math.sqrt(norm) || 1;
+      for (let i = 0; i < vector.length; i++) vector[i] /= norm;
+      return vector;
+    });
+  }
+
   // source: anything drawImage accepts; region: [x, y, w, h] in source pixels (default: whole source)
   async function embed(source, region) {
     const [sx, sy, sw, sh] = region ?? [0, 0, source.width ?? source.videoWidth, source.height ?? source.videoHeight];
     ctx.fillStyle = BACKGROUND;
     ctx.fillRect(0, 0, INPUT_SIZE, INPUT_SIZE);
     ctx.drawImage(source, sx, sy, sw, sh, 0, 0, INPUT_SIZE, INPUT_SIZE);
-    const { data } = ctx.getImageData(0, 0, INPUT_SIZE, INPUT_SIZE);
-    for (let i = 0; i < plane; i++) {
-      input[i] = (data[i * 4] / 255 - MEAN[0]) / STD[0];
-      input[plane + i] = (data[i * 4 + 1] / 255 - MEAN[1]) / STD[1];
-      input[2 * plane + i] = (data[i * 4 + 2] / 255 - MEAN[2]) / STD[2];
-    }
-    const tensor = new ort.Tensor("float32", input, [1, 3, INPUT_SIZE, INPUT_SIZE]);
-    const output = await session.run({ [session.inputNames[0]]: tensor });
-    const vector = Float32Array.from(output[session.outputNames[0]].data);
-    let norm = 0;
-    for (const value of vector) norm += value * value;
-    norm = Math.sqrt(norm) || 1;
-    for (let i = 0; i < vector.length; i++) vector[i] /= norm;
-    return vector;
+    fill(input, 0, ctx.getImageData(0, 0, INPUT_SIZE, INPUT_SIZE).data);
+    return (await run(input, 1))[0];
   }
 
-  return { embed, backend, threads: ort.env.wasm.numThreads };
+  // Several ready cut-outs (RGBA ArrayBuffers of INPUT_SIZE², e.g. from the detector) in one model run.
+  async function embedPixels(buffers) {
+    if (!buffers.length) return [];
+    const batch = new Float32Array(buffers.length * 3 * plane);
+    buffers.forEach((buffer, n) => fill(batch, n * 3 * plane, new Uint8ClampedArray(buffer)));
+    return run(batch, buffers.length);
+  }
+
+  return { embed, embedPixels, backend, threads: ort.env.wasm.numThreads };
 }
 
 export function loadImage(url) {

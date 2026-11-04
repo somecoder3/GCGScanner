@@ -30,7 +30,8 @@ Der Nutzer kommt aus der Webentwicklung.
     Am Handy laut Nutzer „sieht gut aus“.
 - Vorher (2. Nov.): Machbarkeitstest am Handy (Android, Chrome): **WebGPU ~19 Bilder/s bei ~45 ms
   Modell**, wasm unter 10 Bilder/s bei über 100 ms. Erkennung laut Nutzer „ganz gut, auch mit Sleeves“.
-- Noch nicht umgesetzt: mehrere Karten gleichzeitig (nächster Schritt), Preise (laut Nutzer zuletzt,
+- Seit 4. Nov.: Einzelscan entzerrt die Karte (siehe „Erkennung“), voller Index als Einstellung.
+- Noch nicht umgesetzt: mehrere Karten gleichzeitig (Prototyp, siehe unten), Preise (laut Nutzer zuletzt,
   „nettes Gimmick“), ExBurst-Login/Direktimport (vorerst nicht nötig, Button reicht).
 
 ## Fakten, die schon geprüft sind
@@ -73,11 +74,32 @@ auf wasm zurück. In der App lässt sich das unter *Einstellungen & Technik* ums
 (`localStorage`), `?backend=wasm` erzwingt wasm. Kosinus-Ähnlichkeit gegen alle 2205
 Referenzvektoren, Kartenausschnitt über einen festen Rahmen im oberen Bildteil, Glättung über 500 ms.
 
+**Entzerren (seit 4. Nov., Standard an):** Der Scanner sucht im Rahmen (+15 % Rand) die Kartenränder
+(`pwa/js/detector.js` → Worker `detector-worker.js` mit OpenCV.js 4.12, `pickCard()`/`around()` in
+`rectify.js`) und gibt die entzerrte Karte ans Modell. Ohne gefundene Karte (oder wenn OpenCV nicht
+lädt) nimmt er wie bisher den Rahmen-Ausschnitt. OpenCV.js (10 MB) lädt im Hintergrund. Abschaltbar unter
+*Einstellungen & Technik* (`gcg-scanner-rectify`). Gemessen mit `eval.html` (Haken „Entzerren“):
+
+| Stufe | Variante ohne → mit | Kartennummer ohne → mit | entzerrt |
+|---|---|---|---|
+| sauber | 100 → 99,3 % | 100 → 100 % | 99 % |
+| normal | 95,7 → 99,0–99,3 % | 100 → 100 % | 99 % |
+| schwer | 81,0 → 91–92 % | 87,0 → 93,7 % | 90–92 % |
+
+Kosten am PC: ~30 statt ~8 ms pro Bild (24 → 15 Bilder/s). Handy noch nicht gemessen. Die Testbilder
+haben einen ruhigen Hintergrund; echte Hände/Tische können die Kantensuche öfter scheitern lassen
+(dann Rückfall auf den Rahmen). Beide Ausschnitte rechnen und den besseren Treffer nehmen brachte
+nichts zusätzlich. `warpSide: 640` reicht (gleiche Werte wie 1280, etwas schneller).
+
 **Index** (`pwa/data/`, committet, weil nur lokal aus den Kartenbildern erzeugbar):
 `index.json` (Format, Anzahl, Hashes), `variants.json?v=<hash>`, `embeddings.bin?v=<hash>`. Die
 Vektoren sind int8 mit einem float32-Skalierungsfaktor pro Vektor (2,8 MB statt 11 MB), siehe
-`quantize()`/`loadIndex()` in `pwa/js/matcher.js`. Der Dev-Server speichert Kartenliste und Index
-immer zusammen (Hash-Prüfung), daher können sie nicht auseinanderlaufen.
+`quantize()`/`loadIndex()` in `pwa/js/matcher.js`. Zusätzlich liegt der **volle float32-Index**
+`embeddings-full.bin?v=<full>` daneben (Nutzerwunsch zum Vergleich). Die App lädt ihn nur, wenn unter
+*Einstellungen & Technik → Index: voll* gewählt (`gcg-scanner-index`); `eval.html` hat dafür einen Haken.
+`build-index.html` schickt beide in einem Upload, der Dev-Server speichert Kartenliste und beide
+Indizes immer zusammen (Hash-Prüfung), daher können sie nicht auseinanderlaufen. Gemessen am 4. Nov.:
+voll und kompakt gleichauf (normal 95,7 / 95,7 %, schwer 80,7 / 81,0 % Variante).
 
 Simulierte Kamerabilder (`pwa/dev/eval.html`, je 300 Stück, am PC). Werte mit int8-Index und WebGPU
 vom 3. Nov.; der float32-Index mit wasm lag gleichauf (schwer: 86,7 / 80,7 / 82,7 / 95 %):
@@ -105,8 +127,20 @@ Erkennung. Der Nutzer empfand die Pages-Version als schlechter; Verdacht: Die Ob
   Voreinstellung „ich scanne gerade Produkt X“.
 - Zwischen Karten mit verschiedenen Nummern gibt es keine nahezu identischen Referenzbilder.
 - Ähnlich gestaltete Full-Art-Karten (LR+) liegen recht nah beieinander (z. B. 83,9 % gegen 81,5 %).
-- Geplante Verbesserungen: Kartenkanten erkennen und Perspektive entzerren (auch die Basis für
-  mehrere Karten gleichzeitig), optional Texterkennung der Kartennummer bei knappen Treffern.
+- Mögliche Verbesserung: Texterkennung der Kartennummer bei knappen Treffern.
+
+## Mehrere Karten gleichzeitig (Stand 4. Nov.: nur Prototyp, nicht in der App)
+
+`pwa/dev/multi-eval.html` erzeugt Tischbilder mit 1–9 Karten (Untergrund holz/dunkel/hell/Spielmatte,
+Abstand berührend/eng/normal, Hüllen, Schräglage) und misst die Kartensuche aus `detector-worker.js`
+(Optionen als JSON im Eingabefeld, z. B. `{"method":"density"}`). Bestes klassisches Verfahren
+(Standard): Canny → Konturen → konvexe Hülle → 4 Ecken/`minAreaRect` → Seitenverhältnis. Pro Einzelbild
+gefunden: dunkel+Abstand 78 %, Holz+Abstand 58 %, Spielmatte ~10 %, eng/berührend 0–15 %.
+Ausprobiert und schlechter: Hough-Linien, gefüllte Konturen mit Öffnen, Kantendichte, Raster-Teilung,
+Kantenprüfung entlang der Umrisse. Grund: GCG-Karten haben keinen einheitlichen Rand (Motiv bis zur
+Kante), aneinanderliegende Karten verschmelzen, ein 3×3-Block hat sogar das Kartenformat.
+Vorgeschlagen (Nutzer entscheidet noch): kleines Segmentierungsnetz auf synthetischen Szenen
+trainieren (PC hat eine RTX 5060), alternativ Regel „mit ~1 cm Abstand auf ruhigen Untergrund“.
 
 ## PWA-Technik (`pwa/`)
 
@@ -121,7 +155,8 @@ Erkennung. Der Nutzer empfand die Pages-Version als schlechter; Verdacht: Die Ob
   Laden ist die Seite damit `crossOriginIsolated` (nur für Multithread-wasm relevant).
 - Kartenbilder werden mit `crossOrigin="anonymous"` geladen (CORS statt opaque), damit der Service
   Worker sie prüfen und cachen kann.
-- Erster Besuch lädt ~40 MB (WebGPU-Runtime 26 MB, Modell 8,8 MB, Index 3 MB), danach offline.
+- Erster Besuch lädt ~50 MB (WebGPU-Runtime 26 MB, OpenCV.js 10 MB, Modell 8,8 MB, Index 3 MB),
+  danach offline. Der volle Index (11 MB) kommt nur dazu, wenn er gewählt wird.
   `navigator.storage.persist()` wird angefragt.
 - Zurück-Taste: Die Übersicht ist `#liste`. Wurde sie aus dem Scanner geöffnet, ist „Zurück“
   `history.back()`, sonst wird nur der Hash entfernt.
@@ -190,7 +225,7 @@ Nicht im Repo: `build/`, `pwa/model/`, `pwa/vendor/`. Voraussetzungen: Python 3.
 python -m venv build/venv
 build/venv/Scripts/python -m pip install -r tools/model/requirements.txt
 build/venv/Scripts/python tools/model/prepare_model.py    # lädt MobileNetV2, prüft SHA-256
-python tools/vendor/fetch_ort.py                          # onnxruntime-web 1.30.0 aus dem npm-Tarball, prüft die Integrität
+python tools/vendor/fetch_vendor.py                       # onnxruntime-web 1.30.0 + OpenCV.js 4.12 aus npm-Tarballs, prüft die Integrität
 python tools/devserver/serve.py                           # App: http://localhost:8000/
 ```
 
@@ -207,7 +242,7 @@ steht sie im Server-Log, auch ein abgelehntes Zertifikat (`TLS handshake failed`
 
 ## GitHub Pages
 
-- Workflow `.github/workflows/pages.yml`: holt ORT und Modell (mit Prüfsummen), setzt `VERSION` in
+- Workflow `.github/workflows/pages.yml`: holt ORT, OpenCV.js und Modell (mit Prüfsummen), setzt `VERSION` in
   `sw.js`, veröffentlicht `pwa/` ohne `dev/`. Actions sind auf Commit-SHAs gepinnt (checkout v7.0.1,
   setup-python v7.0.0, configure-pages v6.0.0, upload-pages-artifact v5.0.0, deploy-pages v5.0.1).
 - Einmalig nötig (durch den Nutzer): Repo → Settings → Pages → Source: **GitHub Actions**.

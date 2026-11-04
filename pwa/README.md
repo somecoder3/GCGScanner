@@ -14,14 +14,15 @@ Import einfügen.
 |---|---|
 | `index.html`, `css/`, `js/app.js` | App: Scanner und Übersicht (`#liste`) |
 | `js/embedder.js` | MobileNetV2-Merkmale über onnxruntime-web, WebGPU mit Rückfall auf wasm |
-| `js/matcher.js` | Index laden (int8), Suche, Nachdrucke derselben Illustration finden |
+| `js/matcher.js` | Index laden (int8, wahlweise voll float32), Suche, Nachdrucke derselben Illustration finden |
+| `js/detector.js`, `js/detector-worker.js`, `js/rectify.js` | Kartenränder finden und Karte entzerren (OpenCV.js im Worker) |
 | `js/collection.js` | Liste der gescannten Karten (localStorage), CSV-Export |
 | `js/imagepack.js`, `js/images.js` | Verschlüsselte Bildpakete: Passwort, Entschlüsseln, lokaler Bildspeicher |
 | `sw.js` | Service Worker: Offline-Cache, entschlüsselte Bilder unter `images/card/`, Isolations-Header |
 | `data/` | Index und Kartenliste, **committet** (nur lokal erzeugbar) |
 | `images/` | Verschlüsselte Kartenbilder (ein Paket pro Set) und `index.json`, **committet** |
-| `model/`, `vendor/` | Modell und ONNX-Runtime, **nicht** im Repo (Skripte unter `tools/`) |
-| `dev/` | Index bauen, Bildpakete bauen, Erkennung messen; nur mit dem Dev-Server, wird nicht veröffentlicht |
+| `model/`, `vendor/` | Modell, ONNX-Runtime und OpenCV.js, **nicht** im Repo (Skripte unter `tools/`) |
+| `dev/` | Index bauen, Bildpakete bauen, Erkennung messen (eine/mehrere Karten); nur mit dem Dev-Server, wird nicht veröffentlicht |
 
 ## Lokal entwickeln
 
@@ -40,7 +41,7 @@ build/venv/Scripts/python tools/model/prepare_model.py
 ```
 
 ```bash
-python tools/vendor/fetch_ort.py
+python tools/vendor/fetch_vendor.py
 ```
 
 Dev-Server starten, App unter **http://localhost:8000/** öffnen:

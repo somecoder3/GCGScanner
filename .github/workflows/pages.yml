@@ -33,7 +33,7 @@ jobs:
           python-version: "3.11"
 
       - name: Fetch ONNX runtime (npm tarball, integrity-checked)
-        run: python tools/vendor/fetch_ort.py
+        run: python tools/vendor/fetch_vendor.py
 
       - name: Prepare model (ONNX model zoo, SHA-256-checked)
         run: |

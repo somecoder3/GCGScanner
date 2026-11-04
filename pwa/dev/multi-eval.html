@@ -1,0 +1,349 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Mehrere Karten messen</title>
+  <link rel="stylesheet" href="../css/style.css">
+  <style>
+    .scenes { display: flex; flex-wrap: wrap; gap: 8px; }
+    .scenes figure { margin: 0; width: 270px; font-size: 11px; }
+    .scenes canvas { width: 270px; border-radius: 4px; display: block; }
+  </style>
+</head>
+<body>
+  <h1>Mehrere Karten messen</h1>
+  <p class="muted">Legt simulierte Tischbilder mit 1–9 Karten an (Untergrund, Abstand, Drehung, Hüllen, Schräglage,
+    Licht, Unschärfe, JPEG), findet die Karten wie der Scanner (js/detector.js) und erkennt sie. Nur am PC über den
+    Dev-Server. Grün: gefunden, Rot: Fehlerkennung, Gelb gestrichelt: übersehen.</p>
+  <div class="row">
+    <label>Backend <select id="backend"><option>webgpu</option><option>wasm</option></select></label>
+    <label>Szenen <select id="count"><option>20</option><option selected>100</option><option>300</option></select></label>
+    <label>Optionen <input id="options" value='{"method":"density"}' style="width:340px"></label>
+    <label>Untergrund <select id="only-bg"><option value="">alle</option><option>holz</option><option>dunkel</option><option>hell</option><option>spielmatte</option></select></label>
+    <label>Abstand <select id="only-gap"><option value="">alle</option><option>berührend</option><option>eng</option><option>normal</option></select></label>
+    <label><input id="outlines" type="checkbox" checked> Konturen zusätzlich</label>
+    <label>Öffnen <input id="open" type="number" value="0.015" step="0.005" style="width:70px"></label>
+    <button id="start" class="primary">Start</button>
+  </div>
+  <div class="panel"><pre id="status">Lade OpenCV …</pre></div>
+  <h2>Beispiele</h2>
+  <div class="scenes" id="examples"></div>
+  <h2>Probleme</h2>
+  <div class="scenes" id="problems"></div>
+
+  <script src="../vendor/opencv-4.12.0/opencv.js"></script>
+  <script type="module">
+    import { createEmbedder, loadImage } from "../js/embedder.js";
+    import { createDetector } from "../js/detector.js";
+    import { loadIndex, search, similarity, LOOK_ALIKE } from "../js/matcher.js";
+
+    const W = 1080, H = 1440;
+    const BACKGROUNDS = ["holz", "dunkel", "hell", "spielmatte"];
+    const GAPS = { "berührend": 0.005, eng: 0.04, normal: 0.15 };
+
+    const $ = (id) => document.getElementById(id);
+    const status = $("status");
+
+    let cv = window.cv;
+    if (cv instanceof Promise) cv = await cv;
+    else if (!cv.Mat) await new Promise((resolve) => (cv.onRuntimeInitialized = resolve));
+    status.textContent = "Bereit.";
+
+    function mulberry32(seed) {
+      return () => {
+        seed |= 0; seed = (seed + 0x6d2b79f5) | 0;
+        let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+        t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+      };
+    }
+
+    function drawBackground(ctx, kind, rand, matImage) {
+      if (kind === "holz") {
+        const hue = 20 + rand() * 20, light = 25 + rand() * 30;
+        ctx.fillStyle = `hsl(${hue} 45% ${light}%)`;
+        ctx.fillRect(0, 0, W, H);
+        for (let y = 0; y < H; y += 3) {
+          const shade = Math.sin(y * 0.05 + Math.sin(y * 0.007) * 6) * 0.5 + 0.5;
+          ctx.fillStyle = `hsla(${hue} 50% ${light - 12 + shade * 18}% / 0.5)`;
+          ctx.fillRect(0, y, W, 3);
+        }
+      } else if (kind === "dunkel" || kind === "hell") {
+        const light = kind === "dunkel" ? 8 + rand() * 15 : 75 + rand() * 17;
+        ctx.fillStyle = `hsl(${rand() * 360} ${rand() * 25}% ${light}%)`;
+        ctx.fillRect(0, 0, W, H);
+      } else {
+        // Play mat: card artwork, blurred and darkened, filling the table.
+        ctx.filter = `blur(6px) brightness(${0.5 + rand() * 0.4})`;
+        ctx.drawImage(matImage, -100, -100, W + 200, H + 200);
+        ctx.filter = "none";
+      }
+      // fabric / grain noise
+      const noise = ctx.getImageData(0, 0, W, H);
+      for (let i = 0; i < noise.data.length; i += 4) {
+        const n = (rand() - 0.5) * 18;
+        noise.data[i] += n; noise.data[i + 1] += n; noise.data[i + 2] += n;
+      }
+      ctx.putImageData(noise, 0, 0);
+    }
+
+    function roundRect(ctx, x, y, w, h, r) {
+      ctx.beginPath();
+      ctx.roundRect(x, y, w, h, r);
+    }
+
+    // Top-down scene → perspective → light, blur, glare, JPEG. Returns the frame and true card corners.
+    async function makeScene(variants, images, rand, matImage) {
+      const background = $("only-bg").value || BACKGROUNDS[Math.floor(rand() * BACKGROUNDS.length)];
+      const gapName = $("only-gap").value || Object.keys(GAPS)[Math.floor(rand() * 3)];
+      const gap = GAPS[gapName];
+      const n = 1 + Math.floor(rand() * 9);
+      const cols = n === 1 ? 1 : n <= 4 ? 2 : 3;
+      const rows = Math.ceil(n / cols);
+      const sleeves = rand() < 0.5;
+      // card size: grid must fit into ~85 % of the frame
+      const cardW = Math.min((W * 0.85) / (cols + (cols - 1) * gap), (H * 0.85) / ((rows + (rows - 1) * gap) * 88 / 63)) * (0.75 + rand() * 0.25);
+      const cardH = cardW * 88 / 63;
+
+      const top = new OffscreenCanvas(W, H);
+      const ctx = top.getContext("2d");
+      drawBackground(ctx, background, rand, matImage);
+      const gridW = cols * cardW + (cols - 1) * gap * cardW, gridH = rows * cardH + (rows - 1) * gap * cardW;
+      const x0 = (W - gridW) / 2 + (rand() - 0.5) * (W - gridW) * 0.6;
+      const y0 = (H - gridH) / 2 + (rand() - 0.5) * (H - gridH) * 0.6;
+      const cards = [];
+      for (let k = 0; k < n; k++) {
+        const col = k % cols, row = Math.floor(k / cols);
+        const jitter = gap > 0.1 ? 0.05 : 0.005;
+        const cx = x0 + col * cardW * (1 + gap) + cardW / 2 + (rand() - 0.5) * jitter * cardW;
+        const cy = y0 + row * (cardH + gap * cardW) + cardH / 2 + (rand() - 0.5) * jitter * cardW;
+        let angle = (rand() - 0.5) * (gap > 0.1 ? 16 : 3);
+        if (rand() < 0.15) angle += 180;
+        const sideways = n === 1 && rand() < 0.3;
+        if (sideways) angle += 90;
+        const rad = angle * Math.PI / 180;
+        ctx.save();
+        ctx.translate(cx, cy);
+        ctx.rotate(rad);
+        if (sleeves) {
+          // Slightly larger, glossy sleeve with a dark or clear border.
+          const s = cardW * 0.025;
+          roundRect(ctx, -cardW / 2 - s, -cardH / 2 - s, cardW + 2 * s, cardH + 2 * s, cardW * 0.06);
+          ctx.fillStyle = rand() < 0.5 ? "rgba(20,20,30,0.9)" : "rgba(230,230,240,0.35)";
+          ctx.fill();
+        }
+        ctx.drawImage(images[k], -cardW / 2, -cardH / 2, cardW, cardH);
+        if (sleeves) {
+          const gloss = ctx.createLinearGradient(-cardW / 2, -cardH / 2, cardW / 2, cardH / 2);
+          gloss.addColorStop(0, "rgba(255,255,255,0)");
+          gloss.addColorStop(0.45, "rgba(255,255,255,0.12)");
+          gloss.addColorStop(0.55, "rgba(255,255,255,0)");
+          ctx.fillStyle = gloss;
+          ctx.fillRect(-cardW / 2, -cardH / 2, cardW, cardH);
+        }
+        ctx.restore();
+        const corners = [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([sx, sy]) => {
+          const px = sx * cardW / 2, py = sy * cardH / 2;
+          return [cx + px * Math.cos(rad) - py * Math.sin(rad), cy + px * Math.sin(rad) + py * Math.cos(rad)];
+        });
+        cards.push({ variant: variants[k], corners, upsideDown: Math.cos(rad) < -0.5 || (sideways && Math.sin(rad) < 0) });
+      }
+
+      // Phone held at an angle: move the frame corners inwards by up to `tilt`.
+      const tilt = 0.1 * rand();
+      const from = [[0, 0], [W, 0], [W, H], [0, H]];
+      const to = from.map(([x, y]) => [x + (x ? -1 : 1) * rand() * tilt * W, y + (y ? -1 : 1) * rand() * tilt * H]);
+      const src = cv.matFromArray(4, 1, cv.CV_32FC2, to.flat());
+      const dst = cv.matFromArray(4, 1, cv.CV_32FC2, from.flat());
+      const m = cv.getPerspectiveTransform(src, dst);
+      const input = cv.matFromImageData(ctx.getImageData(0, 0, W, H));
+      const output = new cv.Mat();
+      cv.warpPerspective(input, output, m, new cv.Size(W, H), cv.INTER_LINEAR, cv.BORDER_REFLECT);
+      const h = m.data64F;
+      const project = ([x, y]) => {
+        const d = h[6] * x + h[7] * y + h[8];
+        return [(h[0] * x + h[1] * y + h[2]) / d, (h[3] * x + h[4] * y + h[5]) / d];
+      };
+      for (const card of cards) card.corners = card.corners.map(project);
+
+      const frame = new OffscreenCanvas(W, H);
+      const fctx = frame.getContext("2d");
+      const tmp = new OffscreenCanvas(W, H);
+      tmp.getContext("2d").putImageData(new ImageData(new Uint8ClampedArray(output.data), W, H), 0, 0);
+      [src, dst, m, input, output].forEach((mat) => mat.delete());
+      fctx.filter = `brightness(${0.6 + rand() * 0.7}) contrast(${0.75 + rand() * 0.4}) blur(${rand() * 1.8}px)`;
+      fctx.drawImage(tmp, 0, 0);
+      fctx.filter = "none";
+      if (rand() < 0.5) {
+        const gx = rand() * W, gy = rand() * H, r = W * (0.1 + rand() * 0.3);
+        const glare = fctx.createRadialGradient(gx, gy, 0, gx, gy, r);
+        glare.addColorStop(0, `rgba(255,255,255,${0.3 + rand() * 0.4})`);
+        glare.addColorStop(1, "rgba(255,255,255,0)");
+        fctx.fillStyle = glare;
+        fctx.fillRect(0, 0, W, H);
+      }
+      const blob = await frame.convertToBlob({ type: "image/jpeg", quality: 0.8 });
+      return { frame: await createImageBitmap(blob), cards, background, gapName, sleeves, tilt };
+    }
+
+    function inside(quad, [x, y]) {
+      let result = false;
+      for (let i = 0, j = 3; i < 4; j = i++) {
+        const [xi, yi] = quad[i], [xj, yj] = quad[j];
+        if ((yi > y) !== (yj > y) && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) result = !result;
+      }
+      return result;
+    }
+    const centre = (q) => [q.reduce((s, p) => s + p[0], 0) / 4, q.reduce((s, p) => s + p[1], 0) / 4];
+    const area = (q) => Math.abs(q.reduce((s, p, i) => s + p[0] * q[(i + 1) % 4][1] - q[(i + 1) % 4][0] * p[1], 0)) / 2;
+
+    function drawResult(scene, detections, caption) {
+      const canvas = document.createElement("canvas");
+      canvas.width = W / 2; canvas.height = H / 2;
+      const ctx = canvas.getContext("2d");
+      ctx.drawImage(scene.frame, 0, 0, W / 2, H / 2);
+      const poly = (q, color, dash = []) => {
+        ctx.beginPath();
+        q.forEach(([x, y], i) => (i ? ctx.lineTo(x / 2, y / 2) : ctx.moveTo(x / 2, y / 2)));
+        ctx.closePath();
+        ctx.setLineDash(dash);
+        ctx.strokeStyle = color; ctx.lineWidth = 3; ctx.stroke();
+      };
+      for (const card of scene.cards) if (!card.found && !card.ignore) poly(card.corners, "#ffb74d", [8, 6]);
+      for (const d of detections) {
+        poly(d.quad, d.card ? (d.correct ? "#66bb6a" : "#4fc3f7") : "#ef5350");
+        ctx.beginPath(); ctx.arc(d.quad[0][0] / 2, d.quad[0][1] / 2, 5, 0, 7); ctx.fillStyle = "#fff"; ctx.fill();
+        if (d.label) {
+          ctx.font = "bold 14px system-ui"; ctx.fillStyle = "#fff"; ctx.strokeStyle = "#000"; ctx.lineWidth = 3; ctx.setLineDash([]);
+          const [x, y] = centre(d.quad);
+          ctx.strokeText(d.label, x / 2 - 30, y / 2); ctx.fillText(d.label, x / 2 - 30, y / 2);
+        }
+      }
+      const fig = document.createElement("figure");
+      fig.append(canvas);
+      fig.insertAdjacentHTML("beforeend", `<figcaption>${caption}</figcaption>`);
+      return fig;
+    }
+
+    // Line drawing of the detector (white) with all shapes before suppression (blue).
+    function drawDebug(debug) {
+      const canvas = document.createElement("canvas");
+      canvas.width = debug.width; canvas.height = debug.height;
+      const ctx = canvas.getContext("2d");
+      const image = ctx.createImageData(debug.width, debug.height);
+      debug.lines.forEach((v, i) => { image.data[i * 4] = image.data[i * 4 + 1] = image.data[i * 4 + 2] = v; image.data[i * 4 + 3] = 255; });
+      ctx.putImageData(image, 0, 0);
+      const k = debug.width / W;
+      ctx.strokeStyle = "#4fc3f7"; ctx.lineWidth = 2;
+      for (const q of debug.candidates) {
+        ctx.beginPath();
+        q.forEach(([x, y], i) => (i ? ctx.lineTo(x * k, y * k) : ctx.moveTo(x * k, y * k)));
+        ctx.closePath(); ctx.stroke();
+      }
+      const fig = document.createElement("figure");
+      fig.append(canvas);
+      fig.insertAdjacentHTML("beforeend", `<figcaption>Flächen · ${debug.candidates.length} Kandidaten</figcaption>`);
+      return fig;
+    }
+
+    $("start").addEventListener("click", async (event) => {
+      event.target.disabled = true;
+      $("examples").replaceChildren();
+      $("problems").replaceChildren();
+      try {
+        const [index, embedder] = await Promise.all([loadIndex(), createEmbedder({ backend: $("backend").value })]);
+        const detector = createDetector();
+        const options = JSON.parse($("options").value || "{}");
+        const rand = mulberry32(7);
+        const total = { scenes: 0, cards: 0, found: 0, detections: 0, falsePositives: 0, cardNo: 0, variant: 0, lookAlike: 0, orientation: 0, detectMs: 0, embedMs: 0 };
+        const groups = {};
+        const group = (name) => (groups[name] ??= { cards: 0, found: 0, falsePositives: 0, cardNo: 0 });
+        const scenes = Number($("count").value);
+
+        for (let s = 0; s < scenes; s++) {
+          const picks = [...Array(9)].map(() => index.variants[Math.floor(rand() * index.variants.length)]);
+          const images = await Promise.all(picks.map((v) => loadImage(`/ref-images/${v.file}`)));
+          const matImage = await loadImage(`/ref-images/${index.variants[Math.floor(rand() * index.variants.length)].file}`);
+          const scene = await makeScene(picks, images, rand, matImage);
+
+          const t0 = performance.now();
+          const { cards: detections, ms, debug } = await detector.detect(scene.frame, { ...options, debug: s < 6 });
+          const t1 = performance.now();
+          const vectors = await embedder.embedPixels(detections.flatMap((d) => [d.pixels, d.flipped]));
+          const t2 = performance.now();
+          total.detectMs += t1 - t0;
+          total.embedMs += t2 - t1;
+
+          for (const [k, d] of detections.entries()) {
+            const upright = search(index, vectors[2 * k], 3), flipped = search(index, vectors[2 * k + 1], 3);
+            d.flippedBetter = flipped[0].score > upright[0].score;
+            d.matches = d.flippedBetter ? flipped : upright;
+            const c = centre(d.quad);
+            d.card = scene.cards.find((card) => !card.found && inside(card.corners, c) && area(d.quad) / area(card.corners) > 0.7 && area(d.quad) / area(card.corners) < 1.4);
+            if (d.card) d.card.found = d;
+          }
+
+          let sceneOk = true;
+          for (const card of scene.cards) {
+            if (card.ignore) continue;
+            const g = [group(`Untergrund ${scene.background}`), group(`Abstand ${scene.gapName}`), group(scene.sleeves ? "mit Hülle" : "ohne Hülle"), group(scene.cards.length <= 4 ? "1–4 Karten" : "5–9 Karten")];
+            total.cards++; g.forEach((x) => x.cards++);
+            const d = card.found;
+            if (!d) { sceneOk = false; continue; }
+            total.found++; g.forEach((x) => x.found++);
+            const best = d.matches[0].variant;
+            const cardNoOk = best.cardNo === card.variant.cardNo;
+            d.correct = cardNoOk;
+            d.label = best.id;
+            total.cardNo += cardNoOk; g.forEach((x) => (x.cardNo += cardNoOk));
+            total.variant += best.id === card.variant.id;
+            total.lookAlike += best.id === card.variant.id || (cardNoOk && similarity(index, index.byId.get(best.id), index.byId.get(card.variant.id)) >= LOOK_ALIKE);
+            total.orientation += d.flippedBetter === card.upsideDown;
+            if (!cardNoOk) sceneOk = false;
+          }
+          for (const d of detections) {
+            total.detections++;
+            if (d.card?.ignore) continue;
+            if (!d.card) {
+              total.falsePositives++; sceneOk = false;
+              [`Untergrund ${scene.background}`, `Abstand ${scene.gapName}`].forEach((name) => group(name).falsePositives++);
+            }
+          }
+          total.scenes++;
+          const caption = `${scene.cards.length} Karten · ${scene.background} · ${scene.gapName} · ${scene.sleeves ? "Hülle" : "ohne"} · ${detections.length} gefunden · ${ms.toFixed(0)} ms`;
+          if (s < 6) $("examples").append(drawResult(scene, detections, caption), drawDebug(debug));
+          else if (!sceneOk && $("problems").children.length < 18) $("problems").append(drawResult(scene, detections, caption));
+          scene.frame.close();
+          if (s % 5 === 0) status.textContent = `Szene ${s}/${scenes} …`;
+        }
+
+        const pct = (a, b) => (b ? `${((a / b) * 100).toFixed(1)} %` : "–");
+        const result = {
+          backend: embedder.backend,
+          options,
+          scenes: total.scenes,
+          karten: total.cards,
+          "gefunden (Recall)": pct(total.found, total.cards),
+          "Fehlerkennungen pro Szene": +(total.falsePositives / total.scenes).toFixed(2),
+          "Präzision": pct(total.detections - total.falsePositives, total.detections),
+          "Kartennummer richtig (von gefundenen)": pct(total.cardNo, total.found),
+          "Variante richtig": pct(total.variant, total.found),
+          "Variante oder optisch gleich": pct(total.lookAlike, total.found),
+          "Ausrichtung richtig": pct(total.orientation, total.found),
+          "ms Erkennung pro Szene": +(total.detectMs / total.scenes).toFixed(1),
+          "ms Modell pro Szene (2 × Karten)": +(total.embedMs / total.scenes).toFixed(1),
+          gruppen: Object.fromEntries(Object.entries(groups).sort().map(([name, g]) => [name, `gefunden ${pct(g.found, g.cards)} · Nummer ${pct(g.cardNo, g.found)} · Fehlerk. ${g.falsePositives} (${g.cards} Karten)`])),
+        };
+        status.textContent = JSON.stringify(result, null, 2);
+        status.dataset.done = "true";
+        detector.terminate();
+      } catch (error) {
+        status.textContent = `Fehler: ${error.message}\n${error.stack}`;
+        status.dataset.done = "error";
+      }
+      event.target.disabled = false;
+    });
+  </script>
+</body>
+</html>

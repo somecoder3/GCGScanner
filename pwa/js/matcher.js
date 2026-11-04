@@ -7,17 +7,25 @@
 
 const DATA = new URL("../data/", import.meta.url);
 
-export async function loadIndex() {
+export async function loadIndex({ full = false } = {}) {
   const meta = await fetch(new URL("index.json", DATA), { cache: "no-cache" }).then((r) => {
     if (!r.ok) throw new Error("Kein Referenz-Index gefunden. Bitte zuerst dev/build-index.html ausführen.");
     return r.json();
   });
   if (meta.format !== "int8-scaled") throw new Error(`Unbekanntes Index-Format: ${meta.format}`);
+  full &&= !!meta.full;
   const [variants, buffer] = await Promise.all([
     fetch(new URL(`variants.json?v=${meta.variants}`, DATA)).then((r) => r.json()),
-    fetch(new URL(`embeddings.bin?v=${meta.embeddings}`, DATA)).then((r) => r.arrayBuffer()),
+    fetch(new URL(full ? `embeddings-full.bin?v=${meta.full}` : `embeddings.bin?v=${meta.embeddings}`, DATA)).then((r) => r.arrayBuffer()),
   ]);
   const { count, dim } = meta;
+  const byId = new Map(variants.map((v, i) => [v.id, i]));
+  if (full) {
+    if (variants.length !== count || buffer.byteLength !== count * dim * 4) {
+      throw new Error("Voller Index passt nicht zur Kartenliste. Bitte dev/build-index.html erneut ausführen.");
+    }
+    return { variants, dim, vectors: new Float32Array(buffer), byId, full };
+  }
   if (variants.length !== count || buffer.byteLength !== count * dim + count * 4) {
     throw new Error("Referenz-Index passt nicht zur Kartenliste. Bitte dev/build-index.html erneut ausführen.");
   }
@@ -28,7 +36,7 @@ export async function loadIndex() {
     const scale = scales[row];
     for (let i = row * dim, end = i + dim; i < end; i++) vectors[i] = codes[i] * scale;
   }
-  return { variants, dim, vectors, byId: new Map(variants.map((v, i) => [v.id, i])) };
+  return { variants, dim, vectors, byId, full };
 }
 
 // Symmetric int8 quantization per vector, the inverse of the decoding in loadIndex().

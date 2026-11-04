@@ -53,7 +53,11 @@
             status.textContent = `${i + 1}/${variants.length} – ${ms.toFixed(1)} ms pro Karte`;
           }
         }
-        const body = quantize(vectors, variants.length, dim);
+        // Compact int8 index, followed by the full float32 vectors (both are stored).
+        const compact = quantize(vectors, variants.length, dim);
+        const body = new Uint8Array(compact.byteLength + vectors.byteLength);
+        body.set(compact);
+        body.set(new Uint8Array(vectors.buffer), compact.byteLength);
         const response = await fetch("/api/index", {
           method: "POST",
           headers: { "X-Variants-Hash": variantsHash, "X-Dim": String(dim) },

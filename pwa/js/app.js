@@ -5,6 +5,8 @@ import { loadIndex, search, siblings } from "./matcher.js";
 import { Collection } from "./collection.js";
 import { cardImage } from "./images.js";
 import { ImageStore } from "./imagepack.js";
+import { createDetector } from "./detector.js";
+import { around, pickCard } from "./rectify.js";
 
 const $ = (id) => document.getElementById(id);
 const video = $("video");
@@ -21,9 +23,13 @@ const STABLE_FRAMES = 3;
 const MAX_ERRORS = 5;
 const LENS_KEY = "gcg-scanner-lens";
 const BACKEND_KEY = "gcg-scanner-backend";
+const INDEX_KEY = "gcg-scanner-index";
+const RECTIFY_KEY = "gcg-scanner-rectify";
+// The guide crop only has to stay sharp at the model's 224 px, so the detector can work on a small copy.
+const DETECT_OPTIONS = { warpSide: 640 };
 const LIST_HASH = "#liste";
 
-let index, embedder, collection;
+let index, embedder, collection, detector = null;
 let stream = null, track = null, generation = 0, cameraOn = false, resumeCamera = false;
 let recent = [], best = null, lastBest = null, streak = 0, shownId = "";
 let focusInfo = "", focusTimer = 0;
@@ -37,16 +43,22 @@ async function boot() {
   let backend = params.get("backend");
   try { backend ??= localStorage.getItem(BACKEND_KEY); } catch {}
   backend ??= DEFAULT_BACKEND;
+  const full = setting(INDEX_KEY) === "full";
+  const rectify = setting(RECTIFY_KEY) !== "off";
+  $("index-kind").value = full ? "full" : "compact";
+  $("rectify").checked = rectify;
 
   try {
     stats.textContent = worker ? "Lade Erkennung …" : "Lade Erkennung … (ohne Offline-Speicher)";
-    [index, embedder] = await Promise.all([loadIndex(), createEmbedder({ backend })]);
+    [index, embedder] = await Promise.all([loadIndex({ full }), createEmbedder({ backend })]);
   } catch (error) {
     stats.textContent = `Fehler beim Laden: ${error.message}`;
     return;
   }
+  // OpenCV.js (~10 MB) loads in the worker in the background; until then the guide crop is used.
+  if (rectify) detector = createDetector();
   $("backend").value = embedder.backend; // shows the wasm fallback if WebGPU failed
-  stats.textContent = `Bereit · ${index.variants.length} Varianten · ${embedder.backend}`;
+  stats.textContent = `Bereit · ${index.variants.length} Varianten · ${embedder.backend} · Index ${index.full ? "voll" : "kompakt"}`;
   $("camera").disabled = false;
 
   collection = new Collection(index);
@@ -92,6 +104,19 @@ async function registerServiceWorker() {
   }
   return registration;
 }
+
+function setting(key) {
+  try { return localStorage.getItem(key); } catch { return null; }
+}
+
+$("index-kind").addEventListener("change", (event) => {
+  try { localStorage.setItem(INDEX_KEY, event.target.value); } catch {}
+  location.reload();
+});
+$("rectify").addEventListener("change", (event) => {
+  try { localStorage.setItem(RECTIFY_KEY, event.target.checked ? "on" : "off"); } catch {}
+  location.reload();
+});
 
 $("backend").addEventListener("change", (event) => {
   try { localStorage.setItem(BACKEND_KEY, event.target.value); } catch {}
@@ -297,13 +322,33 @@ function guideRegion() {
 
 // ---- Recognition ------------------------------------------------------------------------------
 
+// With the detector, the card's outline is searched around the guide and the straightened card is
+// used (simulated frames: variant 95.7 → 99.3 %, hard 81 → 92 %); without an outline, the guide crop.
+async function embedFrame() {
+  const guideBox = guideRegion();
+  if (detector) {
+    try {
+      const card = pickCard(await detector.detect(video, DETECT_OPTIONS, around(guideBox, video.videoWidth, video.videoHeight)), guideBox);
+      if (card) return { vector: (await embedder.embedPixels([card.pixels]))[0], rectified: true };
+    } catch (error) {
+      // OpenCV could not be loaded (e.g. offline before the first download): go on without it.
+      console.warn("Entzerren nicht möglich", error);
+      detector.terminate();
+      detector = null;
+    }
+  }
+  return { vector: await embedder.embed(video, guideBox), rectified: false };
+}
+
 async function loop(gen) {
-  let frames = 0, windowStart = performance.now(), inferenceMs = 0, errors = 0;
+  let frames = 0, windowStart = performance.now(), inferenceMs = 0, errors = 0, rectified = 0;
   while (gen === generation) {
     const t0 = performance.now();
     let vector;
     try {
-      vector = await embedder.embed(video, guideRegion());
+      const result = await embedFrame();
+      vector = result.vector;
+      rectified += result.rectified;
       errors = 0;
     } catch (error) {
       if (gen !== generation) break;
@@ -331,8 +376,9 @@ async function loop(gen) {
 
     const elapsed = performance.now() - windowStart;
     if (elapsed > 1000) {
-      stats.textContent = `${(frames * 1000 / elapsed).toFixed(1)} Bilder/s · ${(inferenceMs / frames).toFixed(0)} ms · ${embedder.backend} · ${focusInfo}`;
-      frames = 0; inferenceMs = 0; windowStart = performance.now();
+      const straight = detector ? ` · entzerrt ${Math.round((rectified / frames) * 100)} %` : "";
+      stats.textContent = `${(frames * 1000 / elapsed).toFixed(1)} Bilder/s · ${(inferenceMs / frames).toFixed(0)} ms${straight} · ${embedder.backend} · ${focusInfo}`;
+      frames = 0; inferenceMs = 0; rectified = 0; windowStart = performance.now();
     }
     await new Promise(requestAnimationFrame);
   }

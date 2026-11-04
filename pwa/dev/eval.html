@@ -13,6 +13,10 @@
   <div class="row">
     <label>Backend <select id="backend"><option>webgpu</option><option>wasm</option></select></label>
     <label>Bilder pro Stufe <select id="count"><option>100</option><option selected>300</option><option>1000</option></select></label>
+    <label><input id="full" type="checkbox"> voller Index (float32)</label>
+    <label><input id="rectify" type="checkbox"> Entzerren (Kartenkanten suchen)</label>
+    <label><input id="both" type="checkbox"> beide Ausschnitte, besserer gewinnt</label>
+    <label>Optionen <input id="options" value="{}" style="width:200px"></label>
     <button id="start" class="primary">Start</button>
   </div>
   <div class="panel"><pre id="status">Bereit.</pre></div>
@@ -24,6 +28,8 @@
   <script type="module">
     import { createEmbedder, loadImage } from "../js/embedder.js";
     import { loadIndex, search, similarity, LOOK_ALIKE } from "../js/matcher.js";
+    import { createDetector } from "../js/detector.js";
+    import { around, pickCard } from "../js/rectify.js";
 
     // Simulated camera frame and the scanner's guide box (82 % of the height, card aspect, centred).
     const FRAME_W = 720, FRAME_H = 960;
@@ -113,9 +119,10 @@
       $("examples").replaceChildren();
       $("failures").replaceChildren();
       try {
-        const [index, embedder] = await Promise.all([loadIndex(), createEmbedder({ backend: $("backend").value })]);
+        const [index, embedder] = await Promise.all([loadIndex({ full: $("full").checked }), createEmbedder({ backend: $("backend").value })]);
         const perLevel = Number($("count").value);
-        const results = { backend: embedder.backend, threads: embedder.threads, variants: index.variants.length, levels: {} };
+        const detector = $("rectify").checked ? createDetector() : null;
+        const results = { rectify: !!detector, fullIndex: index.full, backend: embedder.backend, threads: embedder.threads, variants: index.variants.length, levels: {} };
 
         // Reference images that are (almost) identical can never be told apart by image alone.
         let duplicates = 0;
@@ -131,13 +138,24 @@
 
         for (const [name, level] of Object.entries(LEVELS)) {
           const rand = mulberry32(42);
-          const stat = { n: 0, top1: 0, top5: 0, cardTop1: 0, altMixup: 0, lookAlike: 0, ms: 0 };
+          const stat = { n: 0, top1: 0, top5: 0, cardTop1: 0, altMixup: 0, lookAlike: 0, ms: 0, rectified: 0 };
           for (let n = 0; n < perLevel; n++) {
             const variant = index.variants[Math.floor(rand() * index.variants.length)];
             const image = await loadImage(`/ref-images/${variant.file}`);
             const frame = await simulate(image, level, rand);
             const t0 = performance.now();
-            const matches = search(index, await embedder.embed(frame, GUIDE), 5);
+            let vector = null;
+            if (detector) {
+              // Like the scanner: search the card's outline around the guide, fall back to the guide crop.
+              const card = pickCard(await detector.detect(frame, JSON.parse($("options").value), around(GUIDE, FRAME_W, FRAME_H)), GUIDE);
+              if (card) [vector] = await embedder.embedPixels([card.pixels]);
+              stat.rectified += !!card;
+            }
+            let matches = search(index, vector ?? await embedder.embed(frame, GUIDE), 5);
+            if (vector && $("both").checked) {
+              const plain = search(index, await embedder.embed(frame, GUIDE), 5);
+              if (plain[0].score > matches[0].score) matches = plain;
+            }
             stat.ms += performance.now() - t0;
             stat.n++;
             const best = matches[0].variant;
@@ -165,6 +183,7 @@
             "Nur Alt Art verwechselt": pct(stat.altMixup),
             "Richtig oder optisch gleiche Variante": pct(stat.lookAlike),
             "ms pro Bild (Modell + Suche)": +(stat.ms / stat.n).toFixed(1),
+            ...(detector && { "entzerrt": pct(stat.rectified) }),
           };
         }
         status.textContent = JSON.stringify(results, null, 2);
