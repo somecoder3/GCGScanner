@@ -6,6 +6,7 @@
 Serves pwa/ like GitHub Pages does, plus routes for the dev pages in pwa/dev/:
   GET  /api/variants        card variants exported live from data/cards.db
   GET  /ref-images/<file>   card images from build/carddb-cache/images
+  POST /api/watermark-masks stores the SAMPLE watermark masks from dev/watermark.html
   POST /api/index           stores the index from dev/build-index.html together with the variant list
                             it was built from (pwa/data/variants.json + embeddings.*)
   POST /api/eval-result     stores the last dev/eval.html result in build/eval-result.json
@@ -35,6 +36,7 @@ IMAGE_DIR = REPO_ROOT / "build" / "carddb-cache" / "images"
 CERT_DIR = REPO_ROOT / "build" / "cert"
 EVAL_RESULT = REPO_ROOT / "build" / "eval-result.json"
 IMAGE_PACK_DIR = PWA_DIR / "images"
+WATERMARK_MASKS = PWA_DIR / "dev" / "watermark" / "masks.json"
 IMAGE_PACK_NAME = re.compile(r"^(index\.json|[A-Za-z0-9]+\.[0-9a-f]{16}\.bin)$")
 
 
@@ -145,6 +147,11 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self.reply(204)
         elif route == "/api/index":
             self.store_index(body)
+        elif route == "/api/watermark-masks":
+            json.loads(body)  # only well-formed JSON
+            WATERMARK_MASKS.parent.mkdir(exist_ok=True)
+            WATERMARK_MASKS.write_bytes(body)
+            self.reply(204)
         elif route == "/api/images/file":
             name = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query).get("name", [""])[0]
             if not IMAGE_PACK_NAME.match(name):
@@ -187,6 +194,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             "variants": hashlib.sha256(variants_json).hexdigest()[:16],
             "embeddings": hashlib.sha256(compact).hexdigest()[:16],
             "full": hashlib.sha256(full).hexdigest()[:16],
+            # "removed": built from reference images without the SAMPLE watermark
+            "watermark": self.headers.get("X-Watermark", "kept"),
         }
         (DATA_DIR / "index.json").write_text(json.dumps(meta, indent=2) + "\n", encoding="utf-8")
         self.log_message("Stored index: %d variants x %d dims", count, dim)

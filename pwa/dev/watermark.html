@@ -1,0 +1,246 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SAMPLE-Wasserzeichen</title>
+  <link rel="stylesheet" href="../css/style.css">
+  <style>
+    .out figure { display: inline-block; margin: 4px; font-size: 12px; vertical-align: top; }
+    .out canvas { width: 240px; border-radius: 4px; display: block; }
+  </style>
+</head>
+<body>
+  <h1>SAMPLE-Wasserzeichen</h1>
+  <p class="muted">Die offiziellen Kartenbilder tragen einen „SAMPLE“-Schriftzug in einigen festen Varianten (Größe,
+    Lage, Strichstärke). Schritt 1 sucht in allen Referenzbildern die hellen dünnen Linien und gruppiert die Bilder
+    nach Variante (nach der Form der Linien, nicht nach ihrer Helligkeit). Danach in der Konsole
+    <code>saveMasks([Gruppen], Schwelle)</code> aufrufen: speichert pro Variante eine Maske nach
+    <code>dev/watermark/masks.json</code>. Schritt 2 zeigt Beispiele, in denen die Maske per Inpainting aufgefüllt ist.</p>
+  <div class="row">
+    <button id="analyze" class="primary">1. Analysieren</button>
+    <button id="examples">2. Beispiele bereinigen</button>
+  </div>
+  <div class="panel"><pre id="status">Lade OpenCV …</pre></div>
+  <div class="out" id="out"></div>
+
+  <script src="../vendor/opencv-4.12.0/opencv.js"></script>
+  <script type="module">
+    import { loadMasks, assignMask, cleanImage, diagonalLines, W, H } from "./watermark.js";
+
+    const $ = (id) => document.getElementById(id);
+    const status = $("status");
+    let cv = window.cv;
+    if (cv instanceof Promise) cv = await cv;
+    else if (!cv.Mat) await new Promise((resolve) => (cv.onRuntimeInitialized = resolve));
+    status.textContent = "Bereit.";
+
+    const CLUSTERS = 6;
+
+    // The dev server occasionally drops a request under load; try again.
+    async function loadRetry(url) {
+      for (let attempt = 1; ; attempt++) {
+        try {
+          return await new Promise((resolve, reject) => {
+            const image = new Image();
+            image.onload = () => resolve(image);
+            image.onerror = () => reject(new Error(`cannot load ${url}`));
+            image.src = url;
+          });
+        } catch (error) {
+          if (attempt >= 4) throw error;
+          await new Promise((r) => setTimeout(r, 300));
+        }
+      }
+    }
+
+    const canvas = new OffscreenCanvas(W, H);
+    const ctx = canvas.getContext("2d", { willReadFrequently: true });
+    function pixels(image) {
+      ctx.clearRect(0, 0, W, H);
+      ctx.drawImage(image, 0, 0, W, H);
+      return ctx.getImageData(0, 0, W, H);
+    }
+
+    function figure(c, label) {
+      const fig = document.createElement("figure");
+      fig.append(c);
+      fig.insertAdjacentHTML("beforeend", `<figcaption>${label}</figcaption>`);
+      $("out").append(fig);
+    }
+    function show(values, label, max = 255) {
+      const c = document.createElement("canvas");
+      c.width = W; c.height = H;
+      const cx = c.getContext("2d");
+      const image = cx.createImageData(W, H);
+      for (let p = 0; p < W * H; p++) {
+        image.data[p * 4] = image.data[p * 4 + 1] = image.data[p * 4 + 2] = Math.min(255, (values[p] / max) * 255);
+        image.data[p * 4 + 3] = 255;
+      }
+      cx.putImageData(image, 0, 0);
+      figure(c, label);
+    }
+
+    const dot = (a, b) => { let s = 0; for (let i = 0; i < a.length; i++) s += a[i] * b[i]; return s; };
+    const normalize = (v) => { const n = Math.sqrt(dot(v, v)) || 1; return v.map((x) => x / n); };
+
+    $("analyze").addEventListener("click", async () => {
+      $("out").replaceChildren();
+      const variants = await fetch("/api/variants").then((r) => r.json());
+      // Pass 1: average bright-line map of all images. For grouping, keep every STEP-th pixel in both
+      // directions as bytes (all full-size maps would need gigabytes).
+      const STEP = 3;
+      const grid = [];
+      for (let y = 0; y < H; y += STEP) for (let x = 0; x < W; x += STEP) grid.push(y * W + x);
+      const sum = new Float32Array(W * H);
+      const samples = [];
+      for (const [n, variant] of variants.entries()) {
+        const map = diagonalLines(pixels(await loadRetry(`/ref-images/${variant.file}`)));
+        for (let p = 0; p < W * H; p++) sum[p] += map[p];
+        samples.push(Uint8Array.from(grid, (p) => Math.min(255, map[p])));
+        if (n % 100 === 0) status.textContent = `Lesen ${n}/${variants.length}`;
+      }
+      const mean = sum.map((s) => s / variants.length);
+      // Grid points on any watermark line (and on common card frame lines, which do not hurt).
+      const candidates = [];
+      grid.forEach((p, i) => { if (mean[p] > 2) candidates.push(i); });
+      // Normalized: groups by line shape, not brightness.
+      const unit = samples.map((sample) => normalize(Float32Array.from(candidates, (i) => sample[i])));
+      samples.length = 0;
+      show(mean, `Mittel aller Linienbilder (${candidates.length} Stichproben-Pixel)`, 30);
+
+      // Pass 2: k-means (cosine), initialised with images that are far apart.
+      let centers = [unit[0]];
+      while (centers.length < CLUSTERS) {
+        let far = 0, farScore = Infinity;
+        unit.forEach((v, i) => {
+          const best = Math.max(...centers.map((c) => dot(c, v)));
+          if (best < farScore) [far, farScore] = [i, best];
+        });
+        centers.push(unit[far]);
+      }
+      let assign = [];
+      for (let iteration = 0; iteration < 12; iteration++) {
+        assign = unit.map((v) => { let k = 0, s = -2; centers.forEach((c, j) => { const d = dot(c, v); if (d > s) [k, s] = [j, d]; }); return k; });
+        centers = centers.map((_, k) => {
+          const c = new Float32Array(candidates.length);
+          unit.forEach((v, i) => { if (assign[i] === k) for (let j = 0; j < c.length; j++) c[j] += v[j]; });
+          return normalize(c);
+        });
+        status.textContent = `Gruppieren, Runde ${iteration + 1}`;
+      }
+
+      // Pass 3: full-size template per group = mean bright-line map of its members.
+      const templates = [...Array(CLUSTERS)].map(() => ({ t: new Float32Array(W * H), ids: [] }));
+      for (const [n, variant] of variants.entries()) {
+        const map = diagonalLines(pixels(await loadRetry(`/ref-images/${variant.file}`)));
+        const { t, ids } = templates[assign[n]];
+        for (let p = 0; p < W * H; p++) t[p] += map[p];
+        ids.push(variant.id);
+        if (n % 100 === 0) status.textContent = `Vorlagen ${n}/${variants.length}`;
+      }
+      templates.forEach(({ t, ids }, k) => {
+        for (let p = 0; p < W * H; p++) t[p] /= ids.length || 1;
+        const sets = {};
+        for (const id of ids) sets[id.split("-")[0]] = (sets[id.split("-")[0]] ?? 0) + 1;
+        const top = Object.entries(sets).sort((a, b) => b[1] - a[1]).slice(0, 6).map(([s, n]) => `${s} ${n}`).join(", ");
+        show(t, `Gruppe ${k}: ${ids.length} Bilder<br>${top}<br>z. B. ${ids.slice(0, 3).join(", ")}`, 40);
+      });
+      window.analysis = { templates };
+      status.textContent = "Fertig. Gruppen prüfen, dann saveMasks([Gruppen], Schwelle) in der Konsole.";
+      status.dataset.done = "true";
+    });
+
+    // Which groups are real watermark variants is decided by looking at the templates. Used on
+    // 4 Nov.: saveMasks([0, 2, 3, 4, 5], 12, 400, 3.2) (group 1 mixed two positions).
+    // Writes dev/watermark/masks.json via the dev server.
+    window.saveMasks = async (groups, threshold = 12, minPixels = 400, bandWidth = 3.2) => {
+      const masks = groups.map((k) => {
+        const raw = Uint8Array.from(window.analysis.templates[k].t, (v) => (v > threshold ? 255 : 0));
+        return keepLarge(alongWord(raw, bandWidth), minPixels);
+      });
+      // Run-length encoded: [start, length, start, length, …] of masked pixels per mask.
+      const encoded = masks.map((mask) => {
+        const runs = [];
+        for (let p = 0; p < mask.length; p++) {
+          if (mask[p] && !mask[p - 1]) runs.push(p, 0);
+          if (mask[p]) runs[runs.length - 1]++;
+        }
+        return runs;
+      });
+      const response = await fetch("/api/watermark-masks", {
+        method: "POST",
+        body: JSON.stringify({ width: W, height: H, groups, threshold, minPixels, bandWidth, masks: encoded }),
+      });
+      masks.forEach((mask, i) => show(mask, `Maske ${i} (Gruppe ${groups[i]}), ${mask.filter(Boolean).length} px`));
+      return response.status;
+    };
+
+    // Only the band along the slanted word: its axis is fitted to the mask pixels, repeatedly
+    // dropping pixels far from it (frame and text remains), then the band is width × spread wide.
+    function alongWord(mask, width) {
+      const fit = (pixels) => {
+        let n = 0, mx = 0, my = 0;
+        for (const p of pixels) { n++; mx += p % W; my += (p / W) | 0; }
+        mx /= n; my /= n;
+        let sxx = 0, syy = 0, sxy = 0;
+        for (const p of pixels) { const x = (p % W) - mx, y = ((p / W) | 0) - my; sxx += x * x; syy += y * y; sxy += x * y; }
+        const angle = 0.5 * Math.atan2(2 * sxy, sxx - syy);
+        const [ux, uy] = [Math.cos(angle), Math.sin(angle)];
+        const across = (p) => -((p % W) - mx) * uy + (((p / W) | 0) - my) * ux;
+        const along = (p) => ((p % W) - mx) * ux + (((p / W) | 0) - my) * uy;
+        const spread = Math.sqrt(pixels.reduce((s, p) => s + across(p) ** 2, 0) / n);
+        return { across, along, spread };
+      };
+      let core = [];
+      mask.forEach((v, p) => v && core.push(p));
+      for (let round = 0; round < 4; round++) {
+        const { across, spread } = fit(core);
+        core = core.filter((p) => Math.abs(across(p)) <= 1.5 * spread);
+      }
+      const { across, along, spread } = fit(core);
+      const ends = core.map(along);
+      const [lo, hi] = [Math.min(...ends) - 10, Math.max(...ends) + 10];
+      return Uint8Array.from(mask, (v, p) => (v && Math.abs(across(p)) <= width * spread && along(p) >= lo && along(p) <= hi ? 255 : 0));
+    }
+
+    // The letters' outlines are long connected strokes; remains of frame and text lines are small
+    // pieces. Pieces are joined over 1-pixel gaps (curves) before measuring.
+    function keepLarge(mask, minPixels) {
+      const src = cv.matFromArray(H, W, cv.CV_8UC1, mask);
+      const joined = new cv.Mat(), labels = new cv.Mat(), stats = new cv.Mat(), centroids = new cv.Mat();
+      const kernel = cv.Mat.ones(3, 3, cv.CV_8U);
+      try {
+        cv.dilate(src, joined, kernel);
+        const count = cv.connectedComponentsWithStats(joined, labels, stats, centroids, 8);
+        const keep = new Uint8Array(count);
+        for (let i = 1; i < count; i++) keep[i] = stats.intAt(i, cv.CC_STAT_AREA) >= minPixels;
+        return Uint8Array.from(mask, (v, p) => (v && keep[labels.data32S[p]] ? 255 : 0));
+      } finally {
+        [src, joined, labels, stats, centroids, kernel].forEach((m) => m.delete());
+      }
+    }
+
+    $("examples").addEventListener("click", async () => {
+      $("out").replaceChildren();
+      const masks = await loadMasks();
+      const variants = await fetch("/api/variants").then((r) => r.json());
+      const ids = ["GD01-010", "GD06-004", "GD05-010", "EB01-022-ALT1", "ST12-001", "GD03-050", "T-001", "R-001"];
+      for (const id of ids) {
+        const variant = variants.find((v) => v.id === id);
+        const data = pixels(await loadRetry(`/ref-images/${variant.file}`));
+        const { index, scores } = assignMask(data, masks);
+        const before = document.createElement("canvas");
+        before.width = W; before.height = H;
+        before.getContext("2d").putImageData(data, 0, 0);
+        figure(before, `${id} vorher (Maske ${index ?? "keine"}; ${scores.map((s) => s.toFixed(2)).join(" / ")})`);
+        const after = document.createElement("canvas");
+        after.width = W; after.height = H;
+        after.getContext("2d").putImageData(cleanImage(data, masks, cv), 0, 0);
+        figure(after, `${id} nachher`);
+      }
+      status.dataset.done = "true";
+    });
+  </script>
+</body>
+</html>

@@ -30,7 +30,8 @@ Der Nutzer kommt aus der Webentwicklung.
     Am Handy laut Nutzer „sieht gut aus“.
 - Vorher (2. Nov.): Machbarkeitstest am Handy (Android, Chrome): **WebGPU ~19 Bilder/s bei ~45 ms
   Modell**, wasm unter 10 Bilder/s bei über 100 ms. Erkennung laut Nutzer „ganz gut, auch mit Sleeves“.
-- Seit 4. Nov.: Einzelscan entzerrt die Karte (siehe „Erkennung“), voller Index als Einstellung.
+- Seit 4. Nov.: Einzelscan entzerrt die Karte (siehe „Erkennung“), voller Index als Einstellung,
+  Index ohne „SAMPLE“-Schriftzug gebaut.
 - Noch nicht umgesetzt: mehrere Karten gleichzeitig (Prototyp, siehe unten), Preise (laut Nutzer zuletzt,
   „nettes Gimmick“), ExBurst-Login/Direktimport (vorerst nicht nötig, Button reicht).
 
@@ -90,6 +91,26 @@ Kosten am PC: ~30 statt ~8 ms pro Bild (24 → 15 Bilder/s). Handy noch nicht ge
 haben einen ruhigen Hintergrund; echte Hände/Tische können die Kantensuche öfter scheitern lassen
 (dann Rückfall auf den Rahmen). Beide Ausschnitte rechnen und den besseren Treffer nehmen brachte
 nichts zusätzlich. `warpSide: 640` reicht (gleiche Werte wie 1280, etwas schneller).
+
+**SAMPLE-Schriftzug (seit 4. Nov. aus dem Index entfernt):** Die offiziellen Bilder tragen einen
+schrägen „SAMPLE“-Schriftzug (dünne, fast deckend weiße Kontur), echte Karten nicht. Es gibt mehrere
+feste Varianten (Größe/Lage), nicht pro Set, sondern gemischt; auf hellen Karten kaum sichtbar (dann
+auch kaum relevant). `pwa/dev/watermark.html` gruppiert alle Bilder nach Variante (nur schräge helle
+Linien, k-means) und speichert pro Variante eine Maske in `pwa/dev/watermark/masks.json` (5 Masken,
+Aufruf steht im Quelltext). `pwa/dev/watermark.js` wählt pro Bild die passende Maske und füllt sie per
+OpenCV-Inpainting auf (halbe Größe, 300 px, reicht fürs Modell). `build-index.html` macht das vor dem
+Einbetten in einem Worker (`watermark-worker.js`, ~75 ms pro Karte, Indexbau ~3 min) (Haken „SAMPLE entfernen“, `index.json` → `"watermark": "removed"`). Nebenwirkung: Wo der
+Schriftzug über Kartentext liegt, verwischt der Text etwas. Die angezeigten Kartenbilder (Pakete)
+bleiben unverändert. Gemessen mit `eval.html` (Testbilder ohne SAMPLE, anders aufgefüllt als der
+Index; ohne Entzerren):
+
+| Testbilder ohne SAMPLE | Variante normal | Variante schwer | Kartennummer schwer |
+|---|---|---|---|
+| bisheriger Index (mit SAMPLE) | 94,0 % | 72,7 % | 79,0 % |
+| Index ohne SAMPLE | 97,7 % | 81,3 % | 87,3 % |
+
+Die älteren Messungen (Testbilder mit SAMPLE gegen Index mit SAMPLE) waren also zu optimistisch.
+Kommt mit einem neuen Set eine neue Schriftzug-Variante dazu, `watermark.html` neu laufen lassen.
 
 **Index** (`pwa/data/`, committet, weil nur lokal aus den Kartenbildern erzeugbar):
 `index.json` (Format, Anzahl, Hashes), `variants.json?v=<hash>`, `embeddings.bin?v=<hash>`. Die
@@ -273,7 +294,17 @@ steht sie im Server-Log, auch ein abgelehntes Zertifikat (`TLS handshake failed`
   2 Wochen Alter verwenden (gilt auch für GitHub Actions, per Commit-SHA). Python-Werkzeuge möglichst
   nur mit der Standardbibliothek.
 - Neues Set: `build_carddb.py --details --images --refresh`, Dev-Server starten,
-  `http://localhost:8000/dev/build-index.html` → Start, dann `data/cards.db` und `pwa/data/` committen.
+  `http://localhost:8000/dev/build-index.html` → Start (~3 min mit SAMPLE-Entfernung), dann
+  `data/cards.db` und `pwa/data/` committen. Neue Schriftzug-Varianten prüfen: `dev/watermark.html`.
+- **OpenCV.js-Falle:** Das Emscripten-Modul `cv` hat eine eigene `then()`-Methode, die mit sich selbst
+  auflöst. `await cv` oder `return cv` aus einer `async`-Funktion ergibt eine Endlosschleife (100 % CPU,
+  „Page Unresponsive“, auch im Worker). `openCv()` in `pwa/dev/watermark.js` entfernt `then` vorher.
+  Daran hing der Indexbau am 4. Nov. über eine Stunde (zuerst fälschlich dem ausgeblendeten Fenster
+  zugeschrieben).
+- Testen im Browser-Fenster: Ist das Fenster ausgeblendet, werden Timer gedrosselt; Abfragen per
+  JavaScript können in Zeitüberschreitungen laufen. Fortschritt lieber über Dateien prüfen
+  (z. B. `pwa/data/index.json`). Der Dev-Server bricht unter Last gelegentlich
+  einzelne Bildanfragen ab (`ConnectionAbortedError`); die Dev-Seiten versuchen es deshalb erneut.
 - Icons: `build/venv/Scripts/python tools/icons/make_icons.py` (braucht numpy aus der venv).
 - Neues Set, Bilder: nach dem Index `http://localhost:8000/dev/build-images.html` mit dem **bisherigen**
   Passwort ausführen (macht der Nutzer selbst), dann `pwa/images/` committen.

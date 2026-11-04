@@ -69,7 +69,8 @@ Im Dev-Modus (`VERSION = "dev"` in `sw.js`) lädt der Service Worker HTML, CSS u
 python tools/carddb/build_carddb.py --details --images --refresh
 ```
 
-Dann den Dev-Server starten, **http://localhost:8000/dev/build-index.html** → *Start* (ca. 6 min) und
+Dann den Dev-Server starten, **http://localhost:8000/dev/build-index.html** → *Start* (ca. 3 min, entfernt
+dabei den „SAMPLE“-Schriftzug der offiziellen Bilder, siehe `dev/watermark.html`) und
 `pwa/data/` committen. Kartenliste und Index werden immer zusammen gespeichert, damit sie zueinander
 passen.
 

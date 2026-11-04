@@ -10,9 +10,11 @@
   <h1>Referenz-Index bauen</h1>
   <p class="muted">Berechnet für jede Kartenvariante den Merkmalsvektor aus dem lokalen Bild und speichert
     ihn zusammen mit der Kartenliste über den Dev-Server in <code>pwa/data/</code>. Nur am PC nötig, nach
-    jeder neuen Kartendatenbank. Danach <code>pwa/data/</code> committen.</p>
+    jeder neuen Kartendatenbank. Danach <code>pwa/data/</code> committen. Der „SAMPLE“-Schriftzug der offiziellen
+    Bilder wird vorher entfernt (Masken aus <code>dev/watermark.html</code>), da echte Karten ihn nicht haben.</p>
   <div class="row">
     <label>Backend <select id="backend"><option>webgpu</option><option>wasm</option></select></label>
+    <label><input id="clean" type="checkbox" checked> SAMPLE entfernen</label>
     <button id="start" class="primary">Start</button>
   </div>
   <div class="panel">
@@ -23,6 +25,14 @@
   <script type="module">
     import { createEmbedder, loadImage } from "../js/embedder.js";
     import { quantize } from "../js/matcher.js";
+    import { createCleaner } from "./watermark.js";
+
+    // The dev server occasionally drops a request under load; try again.
+    async function loadRetry(url) {
+      for (let attempt = 1; ; attempt++) {
+        try { return await loadImage(url); } catch (error) { if (attempt >= 4) throw error; await new Promise((r) => setTimeout(r, 300)); }
+      }
+    }
 
     const status = document.getElementById("status");
     const progress = document.getElementById("progress");
@@ -36,13 +46,19 @@
           .map((b) => b.toString(16).padStart(2, "0")).join("");
         const variants = JSON.parse(variantsText);
         const embedder = await createEmbedder({ backend: document.getElementById("backend").value });
+        const clean = document.getElementById("clean").checked;
+        // SAMPLE removal runs in a worker (OpenCV.js), one image ahead of the model.
+        const cleaner = clean ? createCleaner() : null;
+        const prepare = (variant) => clean ? cleaner.clean(`/ref-images/${variant.file}`) : loadRetry(`/ref-images/${variant.file}`);
+        let next = prepare(variants[0]);
         status.textContent = `Modell geladen (${embedder.backend}, ${embedder.threads} Threads).`;
         progress.max = variants.length;
 
         const started = performance.now();
         let vectors = null, dim = 0;
         for (const [i, variant] of variants.entries()) {
-          const image = await loadImage(`/ref-images/${variant.file}`);
+          const image = await next;
+          if (i + 1 < variants.length) next = prepare(variants[i + 1]);
           const vector = await embedder.embed(image);
           dim = vector.length;
           vectors ??= new Float32Array(variants.length * dim);
@@ -53,6 +69,7 @@
             status.textContent = `${i + 1}/${variants.length} – ${ms.toFixed(1)} ms pro Karte`;
           }
         }
+        cleaner?.terminate();
         // Compact int8 index, followed by the full float32 vectors (both are stored).
         const compact = quantize(vectors, variants.length, dim);
         const body = new Uint8Array(compact.byteLength + vectors.byteLength);
@@ -60,7 +77,7 @@
         body.set(new Uint8Array(vectors.buffer), compact.byteLength);
         const response = await fetch("/api/index", {
           method: "POST",
-          headers: { "X-Variants-Hash": variantsHash, "X-Dim": String(dim) },
+          headers: { "X-Variants-Hash": variantsHash, "X-Dim": String(dim), "X-Watermark": clean ? "removed" : "kept" },
           body,
         });
         if (!response.ok) throw new Error(`Speichern fehlgeschlagen: ${response.status} ${response.statusText}`);

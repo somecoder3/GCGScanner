@@ -14,6 +14,8 @@
     <label>Backend <select id="backend"><option>webgpu</option><option>wasm</option></select></label>
     <label>Bilder pro Stufe <select id="count"><option>100</option><option selected>300</option><option>1000</option></select></label>
     <label><input id="full" type="checkbox"> voller Index (float32)</label>
+    <label><input id="clean-frames" type="checkbox"> Testbilder ohne SAMPLE</label>
+    <label><input id="clean-index" type="checkbox"> Index ohne SAMPLE (wird hier gebaut)</label>
     <label><input id="rectify" type="checkbox"> Entzerren (Kartenkanten suchen)</label>
     <label><input id="both" type="checkbox"> beide Ausschnitte, besserer gewinnt</label>
     <label>Optionen <input id="options" value="{}" style="width:200px"></label>
@@ -25,11 +27,32 @@
   <h2>Fehler</h2>
   <div class="thumbs" id="failures"></div>
 
+  <script src="../vendor/opencv-4.12.0/opencv.js"></script>
   <script type="module">
     import { createEmbedder, loadImage } from "../js/embedder.js";
     import { loadIndex, search, similarity, LOOK_ALIKE } from "../js/matcher.js";
     import { createDetector } from "../js/detector.js";
     import { around, pickCard } from "../js/rectify.js";
+    import { loadMasks, withoutWatermark as clean, openCv } from "./watermark.js";
+
+    const cv = await openCv();
+    const withoutWatermark = (image, masks, options) => clean(image, masks, cv, options);
+
+    async function loadRetry(url) {
+      for (let attempt = 1; ; attempt++) {
+        try { return await loadImage(url); } catch (error) { if (attempt >= 4) throw error; await new Promise((r) => setTimeout(r, 300)); }
+      }
+    }
+
+    // Same layout as loadIndex(), built from the cleaned reference images.
+    async function cleanIndex(base, embedder, masks) {
+      const vectors = new Float32Array(base.variants.length * base.dim);
+      for (const [i, variant] of base.variants.entries()) {
+        vectors.set(await embedder.embed(withoutWatermark(await loadRetry(`/ref-images/${variant.file}`), masks)), i * base.dim);
+        if (i % 100 === 0) status.textContent = `Index ohne SAMPLE: ${i}/${base.variants.length}`;
+      }
+      return { ...base, vectors, cleaned: true };
+    }
 
     // Simulated camera frame and the scanner's guide box (82 % of the height, card aspect, centred).
     const FRAME_W = 720, FRAME_H = 960;
@@ -119,10 +142,12 @@
       $("examples").replaceChildren();
       $("failures").replaceChildren();
       try {
-        const [index, embedder] = await Promise.all([loadIndex({ full: $("full").checked }), createEmbedder({ backend: $("backend").value })]);
+        let [index, embedder] = await Promise.all([loadIndex({ full: $("full").checked }), createEmbedder({ backend: $("backend").value })]);
+        const masks = $("clean-frames").checked || $("clean-index").checked ? await loadMasks() : null;
+        if ($("clean-index").checked) index = await cleanIndex(index, embedder, masks);
         const perLevel = Number($("count").value);
         const detector = $("rectify").checked ? createDetector() : null;
-        const results = { rectify: !!detector, fullIndex: index.full, backend: embedder.backend, threads: embedder.threads, variants: index.variants.length, levels: {} };
+        const results = { rectify: !!detector, fullIndex: index.full, cleanIndex: !!index.cleaned, cleanFrames: $("clean-frames").checked, backend: embedder.backend, threads: embedder.threads, variants: index.variants.length, levels: {} };
 
         // Reference images that are (almost) identical can never be told apart by image alone.
         let duplicates = 0;
@@ -141,7 +166,9 @@
           const stat = { n: 0, top1: 0, top5: 0, cardTop1: 0, altMixup: 0, lookAlike: 0, ms: 0, rectified: 0 };
           for (let n = 0; n < perLevel; n++) {
             const variant = index.variants[Math.floor(rand() * index.variants.length)];
-            const image = await loadImage(`/ref-images/${variant.file}`);
+            let image = await loadRetry(`/ref-images/${variant.file}`);
+            // A different filling than the index uses, so frames and index do not share the same artefacts.
+            if ($("clean-frames").checked) image = withoutWatermark(image, masks, { grow: 3, method: cv.INPAINT_NS });
             const frame = await simulate(image, level, rand);
             const t0 = performance.now();
             let vector = null;
