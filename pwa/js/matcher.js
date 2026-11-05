@@ -55,11 +55,13 @@ export function quantize(vectors, count, dim) {
   return out;
 }
 
-// Returns the k best variants as [{ variant, index, score }], best first.
-export function search(index, query, k = 5) {
+// Returns the k best variants as [{ variant, index, score }], best first. allowed (optional): one byte
+// per variant, 0 = skip it (set filter, excluded cards).
+export function search(index, query, k = 5, allowed = null) {
   const { variants, dim, vectors } = index;
   const best = [];
   for (let row = 0; row < variants.length; row++) {
+    if (allowed && !allowed[row]) continue;
     let score = 0;
     const offset = row * dim;
     for (let i = 0; i < dim; i++) score += vectors[offset + i] * query[i];

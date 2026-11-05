@@ -32,6 +32,8 @@ Der Nutzer kommt aus der Webentwicklung.
   Modell**, wasm unter 10 Bilder/s bei über 100 ms. Erkennung laut Nutzer „ganz gut, auch mit Sleeves“.
 - Seit 4. Nov.: Einzelscan entzerrt die Karte (siehe „Erkennung“), voller Index als Einstellung,
   Index ohne „SAMPLE“-Schriftzug gebaut.
+- Seit 5. Nov. (Nutzerwunsch): ✕-Button neben dem Treffer und Set-Filter im Menü oben rechts,
+  siehe „Scanner-Robustheit“.
 - Noch nicht umgesetzt: mehrere Karten gleichzeitig (Prototyp, siehe unten), Preise (laut Nutzer zuletzt,
   „nettes Gimmick“), ExBurst-Login/Direktimport (vorerst nicht nötig, Button reicht).
 
@@ -144,8 +146,8 @@ Erkennung. Der Nutzer empfand die Pages-Version als schlechter; Verdacht: Die Ob
   (Block-Nummer oben rechts, Folie). 175 Variantenpaare haben eine Ähnlichkeit über 0,95
   (`LOOK_ALIKE` in `matcher.js`). Per Kamera nicht trennbar. **Gelöst in der App:** Der Treffer
   zeigt „+N gleich aussehende Varianten“, die Übersicht markiert solche Einträge mit „Variante prüfen“,
-  bis der Nutzer im Auswahldialog eine Variante gewählt hat (`checked`). Mögliche Erweiterung:
-  Voreinstellung „ich scanne gerade Produkt X“.
+  bis der Nutzer im Auswahldialog eine Variante gewählt hat (`checked`). Der Set-Filter (siehe
+  unten) filtert nach Kartennummer, trennt also keine Nachdrucke aus anderen Produkten.
 - Zwischen Karten mit verschiedenen Nummern gibt es keine nahezu identischen Referenzbilder.
 - Ähnlich gestaltete Full-Art-Karten (LR+) liegen recht nah beieinander (z. B. 83,9 % gegen 81,5 %).
 - Mögliche Verbesserung: Texterkennung der Kartennummer bei knappen Treffern.
@@ -221,6 +223,14 @@ trainieren (PC hat eine RTX 5060), alternativ Regel „mit ~1 cm Abstand auf ruh
 - Die Kamera stoppt beim Wechsel zur Übersicht und wenn die App in den Hintergrund geht. Danach
   läuft sie wieder an.
 - Übernehmen hat eine Sperre von 600 ms gegen Doppeltipps. Ein zweites Exemplar ist ein zweiter Tipp.
+- **✕ neben dem Treffer** schließt eine falsch erkannte Variante samt ihrer gleich aussehenden Nachdrucke
+  (`LOOK_ALIKE`) aus der Suche aus, sonst käme sofort der Nachdruck. Gilt bis zur nächsten Übernahme,
+  bis die Kamera stoppt (auch Objektivwechsel, Hintergrund) oder bis *Fertig*. Nur im Speicher.
+- **Menü oben rechts (▾)** überlagert das Kamerabild. Bisher nur „Set“: Die Suche prüft dann nur Karten,
+  deren Nummer mit dem Set beginnt (`GD03-…`, ALT-Varianten eingeschlossen; Token/Ressourcen sind eigene
+  „Sets“ `T`, `R`, `RP`). Gedacht fürs Booster-Öffnen. Die Wahl bleibt in `localStorage`
+  (`gcg-scanner-set`) und steht dann im Button („GD03 ▾“, orange), damit ein aktiver Filter auffällt.
+  Umgesetzt über eine Byte-Maske `allowed` für `search()` in `matcher.js`.
 
 ## Testen im Browser-Fenster (Claude)
 

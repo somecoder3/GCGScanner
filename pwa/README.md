@@ -8,6 +8,9 @@ Ablauf in der App: Kamera starten → Karte in den Rahmen halten → grüner Rah
 kopieren / speichern* → *ExBurst-Collection öffnen* (exburst.dev/gundam/collection/sets) und dort beim
 Import einfügen.
 
+Falsch erkannt? Das ✕ neben dem Treffer schließt die Karte aus, bis eine Karte übernommen wird.
+Beim Booster-Öffnen oben rechts (▾) das Set wählen, dann vergleicht die App nur mit dessen Karten.
+
 ## Aufbau
 
 | Pfad | Inhalt |

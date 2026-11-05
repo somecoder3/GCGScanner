@@ -1,7 +1,7 @@
 // GCG Scanner: camera → card recognition → list → ExBurst CSV.
 
 import { createEmbedder, DEFAULT_BACKEND } from "./embedder.js";
-import { loadIndex, search, siblings } from "./matcher.js";
+import { loadIndex, search, siblings, LOOK_ALIKE } from "./matcher.js";
 import { Collection } from "./collection.js";
 import { cardImage } from "./images.js";
 import { ImageStore } from "./imagepack.js";
@@ -25,6 +25,7 @@ const LENS_KEY = "gcg-scanner-lens";
 const BACKEND_KEY = "gcg-scanner-backend";
 const INDEX_KEY = "gcg-scanner-index";
 const RECTIFY_KEY = "gcg-scanner-rectify";
+const SET_KEY = "gcg-scanner-set";
 // The guide crop only has to stay sharp at the model's 224 px, so the detector can work on a small copy.
 const DETECT_OPTIONS = { warpSide: 640 };
 const LIST_HASH = "#liste";
@@ -34,6 +35,10 @@ let stream = null, track = null, generation = 0, cameraOn = false, resumeCamera 
 let recent = [], best = null, lastBest = null, streak = 0, shownId = "";
 let focusInfo = "", focusTimer = 0;
 const siblingCache = new Map();
+// Only cards of this set are matched ("" = all), e.g. while opening boosters. Cards marked as wrongly
+// recognized are skipped until a card is taken, the camera stops or the list is opened.
+let scanSet = "", allowed = null;
+const excluded = new Set();
 
 async function boot() {
   const worker = await registerServiceWorker();
@@ -61,6 +66,7 @@ async function boot() {
   stats.textContent = `Bereit · ${index.variants.length} Varianten · ${embedder.backend} · Index ${index.full ? "voll" : "kompakt"}`;
   $("camera").disabled = false;
 
+  fillSetList();
   collection = new Collection(index);
   collection.onChange(() => { renderCount(); if (!$("list-view").hidden) renderList(); });
   renderCount();
@@ -129,6 +135,7 @@ $("backend").addEventListener("change", (event) => {
 // directly (reload on #liste), it must not leave the app, so the hash is just removed.
 let openedList = false;
 $("done").addEventListener("click", () => {
+  clearExcluded();
   openedList = true;
   location.hash = LIST_HASH;
 });
@@ -237,13 +244,12 @@ function stopCamera() {
   stream = track = null;
   video.srcObject = null;
   clearTimeout(focusTimer);
-  recent = []; best = null; lastBest = null; streak = 0;
-  guide.classList.remove("stable");
-  $("take").disabled = true;
+  excluded.clear();
+  updateAllowed();
+  resetHit();
   $("zoom-row").hidden = true;
   $("camera").textContent = "Kamera starten";
   $("camera").classList.add("primary");
-  renderHit();
 }
 
 async function fillLensList() {
@@ -364,12 +370,13 @@ async function loop(gen) {
     }
     const t1 = performance.now();
     if (gen !== generation) break;
-    best = smooth(t1, search(index, vector, SEARCH_K));
+    const matches = search(index, vector, SEARCH_K, allowed);
+    best = matches.length ? smooth(t1, matches) : null;
     inferenceMs += t1 - t0;
     frames++;
 
-    streak = best.variant.id === lastBest ? streak + 1 : 1;
-    lastBest = best.variant.id;
+    streak = best && best.variant.id === lastBest ? streak + 1 : best ? 1 : 0;
+    lastBest = best?.variant.id ?? null;
     guide.classList.toggle("stable", streak >= STABLE_FRAMES);
     $("take").disabled = streak < STABLE_FRAMES;
     renderHit();
@@ -412,7 +419,7 @@ function siblingsOf(variant) {
 // Rebuilds the tile only when the hit changes; otherwise just updates the numbers (no image flicker).
 function renderHit() {
   const box = $("hit");
-  box.hidden = !best;
+  $("hit-row").hidden = !best;
   if (!best) {
     shownId = "";
     return;
@@ -440,11 +447,98 @@ function take() {
   const count = collection.add(best.variant);
   toast(`${best.variant.id} übernommen${count > 1 ? ` (${count}×)` : ""}`);
   navigator.vibrate?.(30);
+  clearExcluded();
   takeLocked = true;
   setTimeout(() => (takeLocked = false), 600);
 }
 $("take").addEventListener("click", take);
 $("hit").addEventListener("click", take);
+
+// ---- Excluding wrong hits and the set filter ---------------------------------------------------
+
+// Starts the smoothing over, so the next hit is built from frames of the new search only.
+function resetHit() {
+  recent = []; best = null; lastBest = null; streak = 0;
+  guide.classList.remove("stable");
+  $("take").disabled = true;
+  renderHit();
+}
+
+// One byte per variant for search(): the chosen set minus the excluded cards (null = everything).
+function updateAllowed() {
+  if (!index) return;
+  if (!scanSet && !excluded.size) {
+    allowed = null;
+    return;
+  }
+  allowed = new Uint8Array(index.variants.length);
+  index.variants.forEach((variant, row) => {
+    allowed[row] = (!scanSet || setOf(variant) === scanSet) && !excluded.has(variant.id) ? 1 : 0;
+  });
+}
+
+function clearExcluded() {
+  if (!excluded.size) return;
+  excluded.clear();
+  updateAllowed();
+  resetHit();
+}
+
+// The wrong hit and its look-alike reprints (otherwise the reprint would simply show up next).
+$("exclude").addEventListener("click", () => {
+  if (!best) return;
+  const { variant } = best;
+  excluded.add(variant.id);
+  for (const s of siblingsOf(variant)) if (s.score >= LOOK_ALIKE) excluded.add(s.variant.id);
+  updateAllowed();
+  resetHit();
+  toast(`${variant.id} ausgeschlossen`);
+});
+
+// Set = card number without its running number: GD01-001 → GD01, T-001 → T.
+const setOf = (variant) => variant.cardNo.replace(/-[^-]*$/, "");
+const SET_ORDER = ["GD", "EB", "ST", "EXB", "EXBP", "EXR", "EXRP", "R", "RP", "T"];
+
+function fillSetList() {
+  const counts = new Map();
+  for (const variant of index.variants) counts.set(setOf(variant), (counts.get(setOf(variant)) ?? 0) + 1);
+  const key = (set) => {
+    const [, letters = set, number = ""] = set.match(/^([A-Z]+)(\d*)$/) ?? [];
+    const group = SET_ORDER.indexOf(letters);
+    return [group < 0 ? SET_ORDER.length : group, Number(number || 0)];
+  };
+  const sets = [...counts.keys()].sort((a, b) => {
+    const [ga, na] = key(a), [gb, nb] = key(b);
+    return ga - gb || na - nb || a.localeCompare(b);
+  });
+  $("scan-set").append(...sets.map((set) => new Option(`${set} (${counts.get(set)})`, set)));
+  const saved = setting(SET_KEY) ?? "";
+  scanSet = counts.has(saved) ? saved : "";
+  $("scan-set").value = scanSet;
+  showSet();
+  updateAllowed();
+}
+
+function showSet() {
+  const toggle = $("menu-toggle");
+  const open = !$("menu").hidden;
+  toggle.textContent = `${scanSet ? `${scanSet} ` : ""}${open ? "▴" : "▾"}`;
+  toggle.classList.toggle("active", !!scanSet);
+  toggle.setAttribute("aria-expanded", String(open));
+}
+
+$("menu-toggle").addEventListener("click", () => {
+  $("menu").hidden = !$("menu").hidden;
+  showSet();
+});
+$("scan-set").addEventListener("change", (event) => {
+  scanSet = event.target.value;
+  try { localStorage.setItem(SET_KEY, scanSet); } catch {}
+  updateAllowed();
+  resetHit();
+  $("menu").hidden = true;
+  showSet();
+});
 
 // ---- List -------------------------------------------------------------------------------------
 

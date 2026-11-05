@@ -26,10 +26,18 @@
       <div class="top">
         <div class="stats" id="stats">Lade Erkennung …</div>
         <select id="lens" hidden aria-label="Kamera"></select>
+        <button id="menu-toggle" class="menu-toggle" aria-expanded="false" aria-controls="menu" aria-label="Weitere Optionen">▾</button>
+        <!-- Extra options, overlaying the camera picture below the toggle. -->
+        <div id="menu" class="menu" hidden>
+          <label>Set <select id="scan-set"><option value="">Alle Sets</option></select></label>
+        </div>
       </div>
       <label class="zoom" id="zoom-row" hidden>Zoom <input id="zoom" type="range"><span id="zoom-value"></span></label>
       <div class="hud">
-        <div id="hit" class="hit" hidden></div>
+        <div id="hit-row" class="hit-row" hidden>
+          <div id="hit" class="hit"></div>
+          <button id="exclude" class="exclude" aria-label="Falsch erkannt – Karte ausschließen">✕</button>
+        </div>
         <div class="actions">
           <button id="camera" class="primary" disabled>Kamera starten</button>
           <button id="take" disabled>Übernehmen</button>
