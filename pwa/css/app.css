@@ -70,6 +70,9 @@ button.danger { border-color: var(--bad); color: var(--bad); }
   text-align: left; border: 2px solid transparent; background: rgba(28, 33, 40, 0.9);
 }
 .hit.stable { border-color: var(--ok); }
+/* Just changed: taps are ignored for a moment (CLICK_LOCK_MS). */
+.hit.locked { opacity: 0.75; }
+.exclude:disabled { opacity: 0.4; }
 .hit img, .hit .noimg { width: 52px; flex: none; }
 .hit div { min-width: 0; }
 .hit b { display: block; font-size: 16px; }
@@ -135,3 +138,5 @@ dialog::backdrop { background: rgba(0, 0, 0, 0.6); }
   background: var(--panel); border: 1px solid #3a424d; border-radius: 8px; padding: 8px 14px; z-index: 10;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
 }
+.toast.with-card { width: max-content; max-width: calc(100vw - 32px); display: flex; gap: 10px; align-items: center; padding: 6px 14px 6px 6px; }
+.toast .card-img, .toast .noimg { width: 36px; flex: none; }

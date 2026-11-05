@@ -18,6 +18,10 @@ const WINDOW_MS = 500;
 const SEARCH_K = 5;
 // A match counts as stable once the same variant leads the smoothed ranking this many frames in a row.
 const STABLE_FRAMES = 3;
+// A shown hit stays at least this long, even if another card briefly matches better, and the
+// buttons ignore taps for a moment after every change, so a tap never hits a card that just appeared.
+const MIN_SHOW_MS = 700;
+const CLICK_LOCK_MS = 400;
 // Single failures (e.g. a frame that is not ready yet) are skipped; after this many in a row the
 // scan stops with a message instead of freezing silently (e.g. lost WebGPU device).
 const MAX_ERRORS = 5;
@@ -32,7 +36,8 @@ const LIST_HASH = "#liste";
 
 let index, embedder, collection, detector = null;
 let stream = null, track = null, generation = 0, cameraOn = false, resumeCamera = false;
-let recent = [], best = null, lastBest = null, streak = 0, shownId = "";
+// best: the hit shown (held for MIN_SHOW_MS); lastBest/streak: the current leader of the smoothing.
+let recent = [], best = null, lastBest = null, streak = 0, shownId = "", shownSince = 0;
 let focusInfo = "", focusTimer = 0;
 const siblingCache = new Map();
 // Only cards of this set are matched ("" = all), e.g. while opening boosters. Cards marked as wrongly
@@ -371,14 +376,21 @@ async function loop(gen) {
     const t1 = performance.now();
     if (gen !== generation) break;
     const matches = search(index, vector, SEARCH_K, allowed);
-    best = matches.length ? smooth(t1, matches) : null;
+    const { top, scores } = matches.length ? smooth(t1, matches) : { top: null, scores: new Map() };
     inferenceMs += t1 - t0;
     frames++;
 
-    streak = best && best.variant.id === lastBest ? streak + 1 : best ? 1 : 0;
-    lastBest = best?.variant.id ?? null;
-    guide.classList.toggle("stable", streak >= STABLE_FRAMES);
-    $("take").disabled = streak < STABLE_FRAMES;
+    streak = top && top.variant.id === lastBest ? streak + 1 : top ? 1 : 0;
+    lastBest = top?.variant.id ?? null;
+    if (!top) {
+      best = null;
+    } else if (best && top.variant.id !== best.variant.id && t1 - shownSince < MIN_SHOW_MS && scores.has(best.variant.id)) {
+      best = { variant: best.variant, score: scores.get(best.variant.id) }; // hold the shown hit a bit longer
+    } else {
+      if (top.variant.id !== best?.variant.id) shownSince = t1;
+      best = top;
+    }
+    updateButtons(t1);
     renderHit();
 
     const elapsed = performance.now() - windowStart;
@@ -399,6 +411,7 @@ function smooth(now, matches) {
   const variants = new Map();
   for (const frame of recent) for (const m of frame.matches) variants.set(m.variant.id, m.variant);
   let top = null;
+  const scores = new Map();
   for (const variant of variants.values()) {
     let sum = 0;
     for (const frame of recent) {
@@ -406,9 +419,22 @@ function smooth(now, matches) {
       sum += hit ? hit.score : frame.matches[frame.matches.length - 1].score;
     }
     const score = sum / recent.length;
+    scores.set(variant.id, score);
     if (!top || score > top.score) top = { variant, score };
   }
-  return top;
+  return { top, scores };
+}
+
+// Stable (green) = the shown hit also leads the smoothing for a few frames. Taking needs that; both
+// buttons also wait CLICK_LOCK_MS after the shown hit changed.
+const isStable = () => !!best && best.variant.id === lastBest && streak >= STABLE_FRAMES;
+const isSettled = (now = performance.now()) => !!best && now - shownSince >= CLICK_LOCK_MS;
+function updateButtons(now) {
+  const settled = isSettled(now);
+  guide.classList.toggle("stable", isStable());
+  $("take").disabled = !(isStable() && settled);
+  $("exclude").disabled = !settled;
+  $("hit").classList.toggle("locked", !settled);
 }
 
 function siblingsOf(variant) {
@@ -435,7 +461,7 @@ function renderHit() {
     if (lookAlikes) text.querySelector(".alike").textContent = `+${lookAlikes} gleich aussehende Variante${lookAlikes > 1 ? "n" : ""} – in der Liste prüfen`;
     box.replaceChildren(cardImage(variant), text);
   }
-  box.classList.toggle("stable", streak >= STABLE_FRAMES);
+  box.classList.toggle("stable", isStable());
   box.querySelector(".score").textContent = `${variant.rarity} · ${(score * 100).toFixed(1)} %`;
 }
 
@@ -443,9 +469,9 @@ function renderHit() {
 // a second copy of the same card is simply a second tap.
 let takeLocked = false;
 function take() {
-  if (!best || streak < STABLE_FRAMES || takeLocked) return;
+  if (!isStable() || !isSettled() || takeLocked) return;
   const count = collection.add(best.variant);
-  toast(`${best.variant.id} übernommen${count > 1 ? ` (${count}×)` : ""}`);
+  toast(`${best.variant.id} übernommen${count > 1 ? ` (${count}×)` : ""}`, best.variant);
   navigator.vibrate?.(30);
   clearExcluded();
   takeLocked = true;
@@ -459,8 +485,7 @@ $("hit").addEventListener("click", take);
 // Starts the smoothing over, so the next hit is built from frames of the new search only.
 function resetHit() {
   recent = []; best = null; lastBest = null; streak = 0;
-  guide.classList.remove("stable");
-  $("take").disabled = true;
+  updateButtons();
   renderHit();
 }
 
@@ -487,13 +512,13 @@ function clearExcluded() {
 
 // The wrong hit and its look-alike reprints (otherwise the reprint would simply show up next).
 $("exclude").addEventListener("click", () => {
-  if (!best) return;
+  if (!isSettled()) return;
   const { variant } = best;
   excluded.add(variant.id);
   for (const s of siblingsOf(variant)) if (s.score >= LOOK_ALIKE) excluded.add(s.variant.id);
   updateAllowed();
   resetHit();
-  toast(`${variant.id} ausgeschlossen`);
+  toast(`${variant.id} ausgeschlossen`, variant);
 });
 
 // Set = card number without its running number: GD01-001 → GD01, T-001 → T.
@@ -750,9 +775,13 @@ $("forget-images").addEventListener("click", async () => {
 // ---- Helpers ----------------------------------------------------------------------------------
 
 let toastTimer = 0;
-function toast(message) {
+// variant (optional): shows its small card image next to the message.
+function toast(message, variant) {
   const box = $("toast");
-  box.textContent = message;
+  const text = document.createElement("span");
+  text.textContent = message;
+  box.replaceChildren(...(variant ? [cardImage(variant)] : []), text);
+  box.classList.toggle("with-card", !!variant);
   box.hidden = false;
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => (box.hidden = true), 2200);

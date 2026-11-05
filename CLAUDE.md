@@ -223,6 +223,13 @@ trainieren (PC hat eine RTX 5060), alternativ Regel „mit ~1 cm Abstand auf ruh
 - Die Kamera stoppt beim Wechsel zur Übersicht und wenn die App in den Hintergrund geht. Danach
   läuft sie wieder an.
 - Übernehmen hat eine Sperre von 600 ms gegen Doppeltipps. Ein zweites Exemplar ist ein zweiter Tipp.
+- **Treffer halten und Klicksperre** (Nutzerwunsch 5. Nov., Treffer wechselten zu schnell, man erwischte
+  die falsche Karte): Ein angezeigter Treffer bleibt mindestens `MIN_SHOW_MS` = 700 ms, solange er in
+  der Glättung noch vorkommt. Nach jedem Wechsel ignorieren ✕, Übernehmen und Treffer-Tipp
+  `CLICK_LOCK_MS` = 400 ms lang Tipps (ausgegraut). Übernehmen braucht zusätzlich „stabil“: Der
+  angezeigte Treffer führt auch die Glättung seit 3 Bildern an. Test mit Kamera, die alle 150 ms zwischen
+  zwei Karten springt: Wechsel frühestens nach ~740 ms. Popups zu übernommenen/ausgeschlossenen Karten
+  zeigen das Kartenbild (`toast(message, variant)`).
 - **✕ neben dem Treffer** schließt eine falsch erkannte Variante samt ihrer gleich aussehenden Nachdrucke
   (`LOOK_ALIKE`) aus der Suche aus, sonst käme sofort der Nachdruck. Gilt bis zur nächsten Übernahme,
   bis die Kamera stoppt (auch Objektivwechsel, Hintergrund) oder bis *Fertig*. Nur im Speicher.
