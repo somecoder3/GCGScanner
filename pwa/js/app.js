@@ -473,7 +473,8 @@ function updateAllowed() {
   }
   allowed = new Uint8Array(index.variants.length);
   index.variants.forEach((variant, row) => {
-    allowed[row] = (!scanSet || setOf(variant) === scanSet) && !excluded.has(variant.id) ? 1 : 0;
+    const set = setOf(variant);
+    allowed[row] = (!scanSet || set === scanSet || GENERAL_SETS.has(set)) && !excluded.has(variant.id) ? 1 : 0;
   });
 }
 
@@ -497,11 +498,16 @@ $("exclude").addEventListener("click", () => {
 
 // Set = card number without its running number: GD01-001 → GD01, T-001 → T.
 const setOf = (variant) => variant.cardNo.replace(/-[^-]*$/, "");
-const SET_ORDER = ["GD", "EB", "ST", "EXB", "EXBP", "EXR", "EXRP", "R", "RP", "T"];
+// Tokens, resources and EX base/resource cards come with every product: always matched, not listed.
+const GENERAL_SETS = new Set(["T", "R", "RP", "EXB", "EXBP", "EXR", "EXRP"]);
+const SET_ORDER = ["GD", "EB", "ST"];
 
 function fillSetList() {
   const counts = new Map();
-  for (const variant of index.variants) counts.set(setOf(variant), (counts.get(setOf(variant)) ?? 0) + 1);
+  for (const variant of index.variants) {
+    const set = setOf(variant);
+    if (!GENERAL_SETS.has(set)) counts.set(set, (counts.get(set) ?? 0) + 1);
+  }
   const key = (set) => {
     const [, letters = set, number = ""] = set.match(/^([A-Z]+)(\d*)$/) ?? [];
     const group = SET_ORDER.indexOf(letters);

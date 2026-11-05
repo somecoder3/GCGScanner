@@ -227,8 +227,8 @@ trainieren (PC hat eine RTX 5060), alternativ Regel „mit ~1 cm Abstand auf ruh
   (`LOOK_ALIKE`) aus der Suche aus, sonst käme sofort der Nachdruck. Gilt bis zur nächsten Übernahme,
   bis die Kamera stoppt (auch Objektivwechsel, Hintergrund) oder bis *Fertig*. Nur im Speicher.
 - **Menü oben rechts (▾)** überlagert das Kamerabild. Bisher nur „Set“: Die Suche prüft dann nur Karten,
-  deren Nummer mit dem Set beginnt (`GD03-…`, ALT-Varianten eingeschlossen; Token/Ressourcen sind eigene
-  „Sets“ `T`, `R`, `RP`). Gedacht fürs Booster-Öffnen. Die Wahl bleibt in `localStorage`
+  deren Nummer mit dem Set beginnt (`GD03-…`, ALT-Varianten eingeschlossen), plus immer die allgemeinen
+  Karten `T`, `R`, `RP`, `EXB(P)`, `EXR(P)` (`GENERAL_SETS`, Nutzerwunsch; stehen nicht in der Liste). Gedacht fürs Booster-Öffnen. Die Wahl bleibt in `localStorage`
   (`gcg-scanner-set`) und steht dann im Button („GD03 ▾“, orange), damit ein aktiver Filter auffällt.
   Umgesetzt über eine Byte-Maske `allowed` für `search()` in `matcher.js`.
 
