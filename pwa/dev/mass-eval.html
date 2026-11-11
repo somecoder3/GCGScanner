@@ -1,0 +1,336 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Massenscan messen</title>
+  <link rel="stylesheet" href="../css/style.css">
+  <style>
+    .controls label { white-space: nowrap; }
+    .shots { display: flex; flex-direction: column; gap: 12px; }
+    .shots figure { margin: 0; font-size: 12px; }
+    .shots canvas { width: 100%; border-radius: 4px; display: block; background: #000; }
+    .corners { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-end; }
+    .corners figure { margin: 0; font-size: 11px; }
+    .corners canvas { display: block; image-rendering: pixelated; border: 1px solid #3a424d; }
+    table { border-collapse: collapse; font-size: 13px; margin: 8px 0; }
+    td, th { padding: 3px 10px; border-bottom: 1px solid #2a3038; text-align: right; }
+    td:first-child, th:first-child { text-align: left; }
+  </style>
+</head>
+<body>
+  <h1>Massenscan messen</h1>
+  <p class="muted">Simulierte Handyfotos: Karten in Spalten, jede verdeckt die vorige bis auf den oberen Streifen
+    (Untergrund, Hüllen, Drehung, Schräglage, Licht, Unschärfe, Rauschen, JPEG). Gemessen wird das Verfahren aus
+    <code>dev/mass-read.js</code>: Wie viele Nummernecken findet es, wie viele liest es richtig? Echte Fotos liegen in
+    <code>build/mass-photos/</code> (je Foto eine <code>.txt</code> mit den Karten darauf). Gelb: Ecke laut
+    Vorgabe, Grün: richtig gelesen, Rot: falsch gelesen oder Fehlfund.</p>
+  <div class="row controls">
+    <label>Szenen <select id="count"><option>3</option><option selected>10</option><option>30</option><option>100</option></select></label>
+    <label>Fotogröße <select id="size"><option value="4000x3000">12 MP (4000×3000)</option><option value="3264x2448">8 MP</option><option value="2000x1500">3 MP</option></select></label>
+    <label>Spalten <select id="columns"><option value="">zufällig 2–5</option><option>2</option><option>3</option><option>4</option><option>5</option></select></label>
+    <label>Karten je Spalte <select id="per-column"><option value="">zufällig 5–15</option><option>5</option><option>10</option><option>15</option><option>20</option></select></label>
+    <label>Sichtbar <select id="visible"><option value="">zufällig 15–32 %</option><option value="0.15">15 %</option><option value="0.2">20 %</option><option value="0.3">30 %</option></select></label>
+    <label>Untergrund <select id="background"><option value="">alle</option><option>holz</option><option>dunkel</option><option>hell</option><option>spielmatte</option></select></label>
+    <label>Hüllen <select id="sleeves"><option value="">zufällig</option><option value="1">ja</option><option value="0">nein</option></select></label>
+    <label><input id="clean" type="checkbox" checked> SAMPLE entfernen</label>
+    <label>Seed <input id="seed" type="number" value="1" style="width:70px"></label>
+    <button id="start" class="primary">Szenen messen</button>
+    <button id="photos">Echte Fotos messen</button>
+  </div>
+  <div class="panel"><pre id="status">Lade OpenCV …</pre></div>
+  <h2>Nummernecken in Originalgröße (links) und 3× vergrößert</h2>
+  <div class="corners" id="corners"></div>
+  <h2>Fotos</h2>
+  <div class="shots" id="shots"></div>
+
+  <script src="../vendor/opencv-4.12.0/opencv.js"></script>
+  <script type="module">
+    import { mulberry32, makeMassScene } from "./mass-scenes.js";
+    import { createCleaner, openCv } from "./watermark.js";
+    import { readCorners, METHOD } from "./mass-read.js";
+    import { loadImage } from "../js/embedder.js";
+
+    const $ = (id) => document.getElementById(id);
+    const status = $("status");
+    const SHOW_SHOTS = 3, SHOW_CORNERS = 36;
+
+    const cv = await openCv();
+    const variants = await fetch("/api/variants").then((r) => r.json());
+    const cardNumbers = new Set(variants.map((v) => v.cardNo));
+    const context = { cv, cardNumbers, variants };
+    status.textContent = `Bereit. Verfahren: ${METHOD}`;
+
+    // Card images, the SAMPLE watermark removed at full size (the number must stay sharp).
+    // A small cache: scenes reuse cards, and cleaning costs some 100 ms per card.
+    let cleaner = null;
+    const cache = new Map();
+    async function cardImage(variant, clean) {
+      const key = `${clean}:${variant.file}`;
+      if (cache.has(key)) return cache.get(key);
+      for (let attempt = 1; ; attempt++) {
+        try {
+          let image;
+          if (clean) {
+            cleaner ??= createCleaner();
+            image = await createImageBitmap(await cleaner.clean(`/ref-images/${variant.file}`, { scale: 1 }));
+          } else {
+            image = await createImageBitmap(await loadImage(`/ref-images/${variant.file}`));
+          }
+          cache.set(key, image);
+          if (cache.size > 150) {
+            const [oldest, bitmap] = cache.entries().next().value;
+            bitmap.close();
+            cache.delete(oldest);
+          }
+          return image;
+        } catch (error) {
+          // The dev server occasionally drops a request under load; try again.
+          if (attempt >= 4) throw error;
+          await new Promise((r) => setTimeout(r, 300));
+        }
+      }
+    }
+
+    // ---- geometry and scoring ---------------------------------------------------------------------
+
+    const centre = (q) => [q.reduce((s, p) => s + p[0], 0) / q.length, q.reduce((s, p) => s + p[1], 0) / q.length];
+    function inside(quad, [x, y]) {
+      let result = false;
+      for (let i = 0, j = quad.length - 1; i < quad.length; j = i++) {
+        const [xi, yi] = quad[i], [xj, yj] = quad[j];
+        if ((yi > y) !== (yj > y) && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) result = !result;
+      }
+      return result;
+    }
+    // Corner region a bit larger, so a box around just the number still counts as found.
+    function grow(quad, factor) {
+      const [cx, cy] = centre(quad);
+      return quad.map(([x, y]) => [cx + (x - cx) * factor, cy + (y - cy) * factor]);
+    }
+
+    // Matches predictions to the true corners of one photo.
+    function score(cards, predictions) {
+      const used = new Set();
+      const result = cards.map((card) => {
+        const area = grow(card.corner, 1.4);
+        const hit = predictions.findIndex((p, i) => !used.has(i) && inside(area, centre(p.quad)));
+        if (hit < 0) return { card, found: false, correct: false };
+        used.add(hit);
+        const prediction = predictions[hit];
+        return { card, prediction, found: true, correct: prediction.cardNo === card.variant.cardNo };
+      });
+      const falsePositives = predictions.filter((_, i) => !used.has(i));
+      return { result, falsePositives };
+    }
+
+    // ---- drawing ----------------------------------------------------------------------------------
+
+    function drawQuad(ctx, quad, color, width) {
+      ctx.beginPath();
+      quad.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
+      ctx.closePath();
+      ctx.strokeStyle = color;
+      ctx.lineWidth = width;
+      ctx.stroke();
+    }
+
+    function showShot(bitmap, caption, draw) {
+      const canvas = document.createElement("canvas");
+      canvas.width = bitmap.width;
+      canvas.height = bitmap.height;
+      const ctx = canvas.getContext("2d");
+      ctx.drawImage(bitmap, 0, 0);
+      draw(ctx, Math.max(2, bitmap.width / 800));
+      const figure = document.createElement("figure");
+      const text = document.createElement("figcaption");
+      text.textContent = caption;
+      figure.append(canvas, text);
+      $("shots").append(figure);
+    }
+
+    // The true corner cut out upright at its photo resolution, to judge how readable it is.
+    function showCorner(bitmap, card) {
+      const [p0, p1, , p3] = card.corner;
+      const w = Math.max(8, Math.round(Math.hypot(p1[0] - p0[0], p1[1] - p0[1])));
+      const h = Math.max(4, Math.round(Math.hypot(p3[0] - p0[0], p3[1] - p0[1])));
+      // Only the bounding box of the corner is needed.
+      const xs = card.corner.map((p) => p[0]), ys = card.corner.map((p) => p[1]);
+      const bx = Math.max(0, Math.floor(Math.min(...xs)) - 2), by = Math.max(0, Math.floor(Math.min(...ys)) - 2);
+      const bw = Math.min(bitmap.width - bx, Math.ceil(Math.max(...xs)) - bx + 4);
+      const bh = Math.min(bitmap.height - by, Math.ceil(Math.max(...ys)) - by + 4);
+      const fctx = new OffscreenCanvas(bw, bh).getContext("2d", { willReadFrequently: true });
+      fctx.drawImage(bitmap, bx, by, bw, bh, 0, 0, bw, bh);
+      const src = cv.matFromImageData(fctx.getImageData(0, 0, bw, bh));
+      const from = cv.matFromArray(4, 1, cv.CV_32FC2, card.corner.flatMap(([x, y]) => [x - bx, y - by]));
+      const to = cv.matFromArray(4, 1, cv.CV_32FC2, [0, 0, w, 0, w, h, 0, h]);
+      const m = cv.getPerspectiveTransform(from, to);
+      const out = new cv.Mat();
+      cv.warpPerspective(src, out, m, new cv.Size(w, h), cv.INTER_LINEAR);
+      const image = new ImageData(new Uint8ClampedArray(out.data), w, h);
+      [src, from, to, m, out].forEach((mat) => mat.delete());
+
+      const figure = document.createElement("figure");
+      const native = document.createElement("canvas");
+      native.width = w; native.height = h;
+      native.getContext("2d").putImageData(image, 0, 0);
+      const big = document.createElement("canvas");
+      big.width = w * 3; big.height = h * 3;
+      const bctx = big.getContext("2d");
+      bctx.imageSmoothingEnabled = false;
+      bctx.drawImage(native, 0, 0, w * 3, h * 3);
+      const caption = document.createElement("figcaption");
+      caption.textContent = `${card.variant.id} · Schrift ${card.textPx.toFixed(1)} px`;
+      const row = document.createElement("div");
+      row.className = "row";
+      row.append(native, big);
+      figure.append(row, caption);
+      $("corners").append(figure);
+    }
+
+    // ---- simulated photos -------------------------------------------------------------------------
+
+    const percent = (a, b) => (b ? `${((a / b) * 100).toFixed(1)} %` : "–");
+    const BUCKETS = [[0, 8], [8, 11], [11, 14], [14, 18], [18, 1e9]];
+    const bucketName = ([a, b]) => (b > 1e8 ? `≥ ${a} px` : a ? `${a}–${b} px` : `< ${b} px`);
+
+    function summary(rows, falsePositives, scenes, ms) {
+      const inFrame = rows.filter((r) => r.card.inFrame);
+      const groups = new Map();
+      const add = (name, r) => {
+        const g = groups.get(name) ?? { n: 0, found: 0, correct: 0, wrong: 0 };
+        g.n++; g.found += r.found; g.correct += r.correct; g.wrong += r.found && !r.correct && r.prediction.cardNo != null;
+        groups.set(name, g);
+      };
+      for (const r of inFrame) {
+        add("alle", r);
+        add(`Untergrund ${r.background}`, r);
+        add(r.sleeves ? "mit Hülle" : "ohne Hülle", r);
+        add(`Schrift ${bucketName(BUCKETS.find(([a, b]) => r.card.textPx >= a && r.card.textPx < b))}`, r);
+      }
+      const text = [...groups.entries()].map(([name, g]) =>
+        `${name.padEnd(24)} ${String(g.n).padStart(5)} Karten · gefunden ${percent(g.found, g.n).padStart(7)} · richtig gelesen ${percent(g.correct, g.n).padStart(7)} · falsch gelesen ${g.wrong}`);
+      const sizes = inFrame.map((r) => r.card.textPx).sort((a, b) => a - b);
+      const median = sizes[Math.floor(sizes.length / 2)] ?? 0;
+      return [
+        `Verfahren: ${METHOD}`,
+        `${scenes} Fotos, ${rows.length} Karten (${inFrame.length} mit Ecke im Bild), ${(ms / 1000).toFixed(0)} s`,
+        `Schrifthöhe der Kartennummer: min ${sizes[0]?.toFixed(1)} px, Median ${median.toFixed(1)} px, max ${sizes.at(-1)?.toFixed(1)} px`,
+        `Fehlfunde (keine Karte an der Stelle): ${falsePositives}`,
+        "",
+        ...text,
+      ].join("\n");
+    }
+
+    $("start").addEventListener("click", async (event) => {
+      event.target.disabled = true;
+      $("shots").replaceChildren();
+      $("corners").replaceChildren();
+      const count = Number($("count").value);
+      const [width, height] = $("size").value.split("x").map(Number);
+      const seed = Number($("seed").value) || 1;
+      const clean = $("clean").checked;
+      const choice = (id) => ($(id).value === "" ? null : Number($(id).value));
+      const rows = [];
+      let falsePositives = 0, corners = 0;
+      const started = performance.now();
+      try {
+        for (let s = 0; s < count; s++) {
+          const rand = mulberry32(seed * 1000 + s);
+          const columns = choice("columns") ?? 2 + Math.floor(rand() * 4);
+          const perColumn = choice("per-column") ?? 5 + Math.floor(rand() * 11);
+          const n = columns * perColumn;
+          status.textContent = `Foto ${s + 1}/${count}: lade ${n} Karten …`;
+          const chosen = Array.from({ length: n }, () => variants[Math.floor(rand() * variants.length)]);
+          const cards = [];
+          for (const variant of chosen) cards.push({ variant, image: await cardImage(variant, clean) });
+          status.textContent = `Foto ${s + 1}/${count}: erzeuge und lese …`;
+          const scene = await makeMassScene(cards, rand, cv, {
+            width, height, columns,
+            visible: choice("visible"),
+            background: $("background").value || null,
+            sleeves: $("sleeves").value === "" ? null : $("sleeves").value === "1",
+          });
+          const predictions = await readCorners(scene.frame, context);
+          const scored = score(scene.cards.filter((c) => c.inFrame), predictions);
+          falsePositives += scored.falsePositives.length;
+          for (const r of scored.result) rows.push({ ...r, background: scene.meta.background, sleeves: scene.meta.sleeves });
+          for (const card of scene.cards.filter((c) => !c.inFrame)) rows.push({ card, found: false, correct: false, background: scene.meta.background, sleeves: scene.meta.sleeves });
+
+          if (s < SHOW_SHOTS) {
+            const { meta } = scene;
+            showShot(scene.frame, `Foto ${s + 1}: ${meta.columns} Spalten × ${meta.perColumn}, sichtbar ${(meta.visible * 100).toFixed(0)} %, ${meta.background}${meta.sleeves ? ", Hüllen" : ""}, Schräglage ${(meta.tilt * 100).toFixed(0)} %, Unschärfe ${meta.blur.toFixed(1)} px`, (ctx, line) => {
+              for (const card of scene.cards) drawQuad(ctx, card.corner, "#ffb74d", line);
+              for (const r of scored.result.filter((x) => x.found)) drawQuad(ctx, r.prediction.quad, r.correct ? "#66bb6a" : "#ef5350", line * 1.5);
+              for (const p of scored.falsePositives) drawQuad(ctx, p.quad, "#ef5350", line * 1.5);
+            });
+          }
+          for (const card of scene.cards) {
+            if (corners >= SHOW_CORNERS || !card.inFrame) break;
+            if (rand() < 0.3) { showCorner(scene.frame, card); corners++; }
+          }
+          if (s >= SHOW_SHOTS) scene.frame.close();
+          status.textContent = summary(rows, falsePositives, s + 1, performance.now() - started);
+        }
+        status.dataset.done = "true";
+      } catch (error) {
+        console.error(error);
+        status.textContent = `Fehler: ${error.message}\n\n${status.textContent}`;
+        status.dataset.done = "error";
+      }
+      event.target.disabled = false;
+    });
+
+    // ---- real photos ------------------------------------------------------------------------------
+
+    // ExBurst ids in the lists are fine too: compared by card number.
+    const toCardNo = (id) => id.replace(/-ALT\d+$/i, "").toUpperCase();
+
+    $("photos").addEventListener("click", async (event) => {
+      event.target.disabled = true;
+      $("shots").replaceChildren();
+      $("corners").replaceChildren();
+      const lines = [`Verfahren: ${METHOD}`, ""];
+      try {
+        const photos = await fetch("/api/mass-photos").then((r) => r.json());
+        if (!photos.length) {
+          status.textContent = "Keine Fotos in build/mass-photos/ gefunden (jpg, png oder webp, je mit gleichnamiger .txt).";
+          return;
+        }
+        let truthTotal = 0, correctTotal = 0, extraTotal = 0;
+        for (const photo of photos) {
+          status.textContent = `Lese ${photo.name} …`;
+          const bitmap = await createImageBitmap(await fetch(photo.url).then((r) => r.blob()));
+          const started = performance.now();
+          const predictions = await readCorners(bitmap, context);
+          const ms = performance.now() - started;
+          const remaining = photo.truth.map(toCardNo);
+          let correct = 0;
+          const extra = [];
+          for (const p of predictions) {
+            const at = p.cardNo ? remaining.indexOf(p.cardNo) : -1;
+            if (at >= 0) { remaining.splice(at, 1); correct++; } else extra.push(p.cardNo ?? `„${p.text}“`);
+          }
+          truthTotal += photo.truth.length; correctTotal += correct; extraTotal += extra.length;
+          lines.push(`${photo.name}: ${bitmap.width}×${bitmap.height}, ${photo.truth.length} Karten laut Liste${photo.listed ? "" : " (keine .txt!)"}, ${correct} richtig, ${(ms / 1000).toFixed(1)} s`);
+          if (remaining.length) lines.push(`  fehlt: ${remaining.join(", ")}`);
+          if (extra.length) lines.push(`  zu viel/falsch: ${extra.join(", ")}`);
+          showShot(bitmap, `${photo.name}: ${correct}/${photo.truth.length} richtig`, (ctx, line) => {
+            for (const p of predictions) {
+              const ok = p.cardNo && photo.truth.map(toCardNo).includes(p.cardNo);
+              drawQuad(ctx, p.quad, ok ? "#66bb6a" : "#ef5350", line * 1.5);
+            }
+          });
+        }
+        lines.splice(2, 0, `Gesamt: ${correctTotal}/${truthTotal} richtig (${percent(correctTotal, truthTotal)}), ${extraTotal} zu viel/falsch`, "");
+        status.textContent = lines.join("\n");
+      } catch (error) {
+        console.error(error);
+        status.textContent = `Fehler: ${error.message}`;
+      } finally {
+        event.target.disabled = false;
+      }
+    });
+  </script>
+</body>
+</html>

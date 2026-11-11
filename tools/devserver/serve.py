@@ -6,6 +6,9 @@
 Serves pwa/ like GitHub Pages does, plus routes for the dev pages in pwa/dev/:
   GET  /api/variants        card variants exported live from data/cards.db
   GET  /ref-images/<file>   card images from build/carddb-cache/images
+  GET  /api/mass-photos     real test photos for dev/mass-eval.html: build/mass-photos/*.jpg|png|webp,
+                            each with an optional <name>.txt listing the cards on it (one per line)
+  GET  /mass-photos/<file>  one of those photos
   POST /api/watermark-masks stores the SAMPLE watermark masks from dev/watermark.html
   POST /api/index           stores the index from dev/build-index.html together with the variant list
                             it was built from (pwa/data/variants.json + embeddings.*)
@@ -37,6 +40,8 @@ CERT_DIR = REPO_ROOT / "build" / "cert"
 EVAL_RESULT = REPO_ROOT / "build" / "eval-result.json"
 IMAGE_PACK_DIR = PWA_DIR / "images"
 WATERMARK_MASKS = PWA_DIR / "dev" / "watermark" / "masks.json"
+MASS_PHOTO_DIR = REPO_ROOT / "build" / "mass-photos"
+PHOTO_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp"}
 IMAGE_PACK_NAME = re.compile(r"^(index\.json|[A-Za-z0-9]+\.[0-9a-f]{16}\.bin)$")
 
 
@@ -52,6 +57,30 @@ def export_variants() -> bytes:
     keys = ["id", "cardNo", "name", "rarity", "file"]
     variants = [dict(zip(keys, row)) for row in rows]
     return json.dumps(variants, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+
+
+def list_mass_photos() -> bytes:
+    """Test photos with the card list from <name>.txt: lines like "GD02-011", "2 GD02-011" or
+    "GD05-123-ALT1"; empty lines and lines starting with # are ignored."""
+    photos = []
+    if MASS_PHOTO_DIR.is_dir():
+        for path in sorted(MASS_PHOTO_DIR.iterdir()):
+            if path.suffix.lower() not in PHOTO_SUFFIXES:
+                continue
+            truth, listed = [], path.with_suffix(".txt")
+            if listed.is_file():
+                for line in listed.read_text(encoding="utf-8-sig").splitlines():
+                    line = line.split("#")[0].strip()
+                    if not line:
+                        continue
+                    count, _, card = line.partition(" ")
+                    if count.isdigit() and card.strip():
+                        truth += [card.strip().upper()] * int(count)
+                    else:
+                        truth.append(line.upper())
+            photos.append({"name": path.name, "url": "/mass-photos/" + urllib.parse.quote(path.name),
+                           "truth": truth, "listed": listed.is_file()})
+    return json.dumps(photos, ensure_ascii=False).encode("utf-8")
 
 
 def lan_ips():
@@ -130,11 +159,16 @@ class Handler(http.server.SimpleHTTPRequestHandler):
     def translate_path(self, path):
         if path.startswith("/ref-images/"):
             return str(IMAGE_DIR / Path(path.split("?")[0]).name)
+        if path.startswith("/mass-photos/"):
+            return str(MASS_PHOTO_DIR / Path(urllib.parse.unquote(path.split("?")[0])).name)
         return super().translate_path(path)
 
     def do_GET(self):
         if self.path.split("?")[0] == "/api/variants":
             self.reply(200, export_variants(), "application/json; charset=utf-8")
+            return
+        if self.path.split("?")[0] == "/api/mass-photos":
+            self.reply(200, list_mass_photos(), "application/json; charset=utf-8")
             return
         super().do_GET()
 

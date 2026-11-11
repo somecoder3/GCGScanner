@@ -118,6 +118,10 @@ Index; ohne Entzerren):
 
 Die älteren Messungen (Testbilder mit SAMPLE gegen Index mit SAMPLE) waren also zu optimistisch.
 Kommt mit einem neuen Set eine neue Schriftzug-Variante dazu, `watermark.html` neu laufen lassen.
+**Fehler bis 11. Nov.:** Drei der fünf Masken enthielten Reste der Kartennummer (x 462–509, y 17–32;
+die weiße Nummer steht auf jeder Karte an derselben Stelle), das Auffüllen verschmierte dort die
+Nummer. `loadMasks()` leert seitdem die Nummernecke (`PROTECTED`, rechts oben 34 % × 7 %), egal was
+in `masks.json` steht. Index am 11. Nov. damit neu gebaut.
 
 **Index** (`pwa/data/`, committet, weil nur lokal aus den Kartenbildern erzeugbar):
 `index.json` (Format, Anzahl, Hashes), `variants.json?v=<hash>`, `embeddings.bin?v=<hash>`. Die
@@ -170,7 +174,33 @@ Kante), aneinanderliegende Karten verschmelzen, ein 3×3-Block hat sogar das Kar
 Vorgeschlagen (Nutzer entscheidet noch): kleines Segmentierungsnetz auf synthetischen Szenen
 trainieren (PC hat eine RTX 5060), alternativ Regel „mit ~1 cm Abstand auf ruhigen Untergrund“.
 
-## PWA-Technik (`pwa/`)
+## Massenscan: Nummernecke lesen (Stand 11. Nov.: Schritt 1 von 5)
+
+Nutzerwunsch: Foto (später live) von Karten, die so übereinanderliegen, dass nur der obere Streifen
+sichtbar ist; die Ecke rechts oben enthält optional `LK`/`SP`, Kartennummer, Rarität (`C`, `U`, `R`, `LR`,
+`P`, ggf. `+`/`++`) und das Jahr im Sechseck (`1` für GD01–GD04, `2` ab GD05). Normal: schwarzer Reiter
+mit weißer Schrift; Sonderkarten (Gold/Silber, z. B. `GD01-001-ALT2`, `GD05-123-ALT1`) mit
+kontrastarmer Schrift auf hellem Grund. In `cards.db` steht `LK` in der Rarität (`LKR+`), **`SP` nicht**
+(`GD05-123-ALT1` hat nur `U+`, die Karte zeigt `SP`).
+
+Plan (mit dem Nutzer abgestimmt): 1. Testfotos und Messseite, 2. Nummernecken finden (erst klassisch mit
+OpenCV, sonst kleiner trainierter Detektor), 3. Nummer lesen (erst Zeichenvorlagen aus den
+Referenzbildern, sonst kleines Lesenetz; Abgleich gegen die 1290 bekannten Nummern), 4. Variante über
+Rarität/`LK`/`SP`/Jahr und Bildvergleich des sichtbaren Streifens, 5. Einbau in die App (Foto über die
+Kamera-App, Auswertung im Worker, Korrektur durch Antippen). Tesseract.js eher nicht (groß, allgemein).
+
+**Schritt 1 (fertig):** `pwa/dev/mass-scenes.js` erzeugt Fotos (Standard 12 MP) mit 2–5 Spalten zu
+5–15 Karten, 15–32 % sichtbar, Untergrund, Hüllen, Drehung, Schräglage, Licht, Unschärfe, Rauschen, JPEG;
+bekannt ist pro Karte das Viereck der Nummernecke (`CORNER` in Kartenanteilen, `TEXT_HEIGHT` = 1,7 %
+der Kartenhöhe). Karten mit SAMPLE-Entfernung in voller Größe (`cleanImage(..., { scale: 1 })`).
+`pwa/dev/mass-eval.html` misst das Verfahren aus `pwa/dev/mass-read.js` (`readCorners(bitmap,
+context)` → `[{ quad, text, cardNo }]`, noch Platzhalter): gefunden/richtig gelesen/falsch, nach
+Untergrund, Hülle und Schrifthöhe, und zeigt die Ecken in Originalgröße. Echte Fotos legt der Nutzer
+nach `build/mass-photos/` (nicht im Repo; Anleitung `LIESMICH.txt`), je mit `<name>.txt` (eine Karte pro
+Zeile, `2 GD01-118` für zwei). Der Dev-Server liefert sie über `/api/mass-photos` und `/mass-photos/`.
+Erste Werte: 12 MP mit ~40 Karten → Nummer ~15 px hoch, in der Vergrößerung gut lesbar. Eine Szene
+braucht am PC ~9 s.
+
 
 - **Service Worker** (`pwa/sw.js`): Caches `gcg-shell-<VERSION>` (HTML/CSS/JS, vorab geladen),
   `gcg-assets-v1` (Modell, Runtime, Index; URLs ändern sich mit dem Inhalt) und `gcg-images-v1`

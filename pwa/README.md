@@ -26,7 +26,7 @@ Unter *Einstellungen* lassen sich die Scanner-Zeiten anpassen (Anzeigedauer, Tip
 | `data/` | Index und Kartenliste, **committet** (nur lokal erzeugbar) |
 | `images/` | Verschlüsselte Kartenbilder (ein Paket pro Set) und `index.json`, **committet** |
 | `model/`, `vendor/` | Modell, ONNX-Runtime und OpenCV.js, **nicht** im Repo (Skripte unter `tools/`) |
-| `dev/` | Index bauen, Bildpakete bauen, Erkennung messen (eine/mehrere Karten); nur mit dem Dev-Server, wird nicht veröffentlicht |
+| `dev/` | Index bauen, Bildpakete bauen, Erkennung messen (eine/mehrere Karten, Massenscan `mass-eval.html` mit Fotos aus `build/mass-photos/`); nur mit dem Dev-Server, wird nicht veröffentlicht |
 
 ## Lokal entwickeln
 

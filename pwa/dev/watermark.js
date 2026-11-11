@@ -53,12 +53,18 @@ export function highpass({ data }) {
   return out;
 }
 
+// The card number corner (number, rarity, year mark) is never part of the watermark. Its white text
+// sits at the same place on every card, so three of the masks picked up bits of it (x 462–509,
+// y 17–32), and inpainting smeared the number. Cleared here for any masks.json.
+const PROTECTED = { x0: Math.round(W * 0.66), y1: Math.round(H * 0.07) };
+
 export async function loadMasks() {
   const { width, height, masks } = await fetch(new URL("watermark/masks.json", import.meta.url), { cache: "no-cache" }).then((r) => r.json());
   if (width !== W || height !== H) throw new Error("masks.json passt nicht zur Bildgröße");
   return masks.map((runs) => {
     const mask = new Uint8Array(W * H);
     for (let i = 0; i < runs.length; i += 2) mask.fill(255, runs[i], runs[i] + runs[i + 1]);
+    for (let y = 0; y < PROTECTED.y1; y++) mask.fill(0, y * W + PROTECTED.x0, (y + 1) * W);
     return mask;
   });
 }
@@ -79,10 +85,11 @@ export function assignMask(imageData, masks) {
 }
 
 // ImageData (W × H) → new ImageData with the watermark of its variant filled in. Works at half size
-// (300 × 419): plenty for the model's 224 px input and about four times faster than full size.
-export function cleanImage(imageData, masks, cv, { grow = 5, method = cv.INPAINT_TELEA } = {}) {
+// (300 × 419) by default: plenty for the model's 224 px input and about four times faster than full
+// size. scale: 1 for full size (dev/mass-eval.html needs the small card number sharp).
+export function cleanImage(imageData, masks, cv, { grow = 5, method = cv.INPAINT_TELEA, scale = 0.5 } = {}) {
   const { index } = assignMask(imageData, masks);
-  const w = W / 2, h = Math.round(H / 2);
+  const w = Math.round(W * scale), h = Math.round(H * scale);
   const rgba = cv.matFromImageData(imageData);
   const rgb = new cv.Mat(), small = new cv.Mat(), mask = new cv.Mat(), smallMask = new cv.Mat(), filled = new cv.Mat();
   const kernel = cv.Mat.ones(grow, grow, cv.CV_8U);
@@ -104,7 +111,12 @@ export function cleanImage(imageData, masks, cv, { grow = 5, method = cv.INPAINT
       out.data[p * 4 + 3] = 255;
     }
     // Keep the transparent rounded corners of the original.
-    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) out.data[(y * w + x) * 4 + 3] = imageData.data[((y * 2) * W + x * 2) * 4 + 3];
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const sx = Math.min(W - 1, Math.round(x / scale)), sy = Math.min(H - 1, Math.round(y / scale));
+        out.data[(y * w + x) * 4 + 3] = imageData.data[(sy * W + sx) * 4 + 3];
+      }
+    }
     return out;
   } finally {
     [rgba, rgb, small, mask, smallMask, filled, kernel].forEach((m) => m.delete());
