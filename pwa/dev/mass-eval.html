@@ -24,17 +24,18 @@
     (Untergrund, Hüllen, Drehung, Schräglage, Licht, Unschärfe, Rauschen, JPEG). Gemessen wird das Verfahren aus
     <code>dev/mass-read.js</code>: Wie viele Nummernecken findet es, wie viele liest es richtig? Echte Fotos liegen in
     <code>build/mass-photos/</code> (je Foto eine <code>.txt</code> mit den Karten darauf). Gelb: Ecke laut
-    Vorgabe, Grün: richtig gelesen, Rot: falsch gelesen oder Fehlfund.</p>
+    Vorgabe, Cyan: gefunden (noch nicht gelesen), Grün: richtig gelesen, Rot: falsch gelesen, Magenta: Fehlfund.</p>
   <div class="row controls">
     <label>Szenen <select id="count"><option>3</option><option selected>10</option><option>30</option><option>100</option></select></label>
     <label>Fotogröße <select id="size"><option value="4000x3000">12 MP (4000×3000)</option><option value="3264x2448">8 MP</option><option value="2000x1500">3 MP</option></select></label>
-    <label>Spalten <select id="columns"><option value="">zufällig 2–5</option><option>2</option><option>3</option><option>4</option><option>5</option></select></label>
-    <label>Karten je Spalte <select id="per-column"><option value="">zufällig 5–15</option><option>5</option><option>10</option><option>15</option><option>20</option></select></label>
-    <label>Sichtbar <select id="visible"><option value="">zufällig 15–32 %</option><option value="0.15">15 %</option><option value="0.2">20 %</option><option value="0.3">30 %</option></select></label>
+    <label>Spalten <select id="columns"><option value="">zufällig 2–4</option><option>2</option><option>3</option><option>4</option><option>5</option></select></label>
+    <label>Karten je Spalte <select id="per-column"><option value="">zufällig 8–15</option><option>5</option><option>10</option><option>15</option><option>20</option></select></label>
+    <label>Sichtbar <select id="visible"><option value="">zufällig 5,5–12 %</option><option value="0.06">6 %</option><option value="0.08">8 %</option><option value="0.12">12 %</option><option value="0.2">20 %</option></select></label>
     <label>Untergrund <select id="background"><option value="">alle</option><option>holz</option><option>dunkel</option><option>hell</option><option>spielmatte</option></select></label>
     <label>Hüllen <select id="sleeves"><option value="">zufällig</option><option value="1">ja</option><option value="0">nein</option></select></label>
     <label><input id="clean" type="checkbox" checked> SAMPLE entfernen</label>
     <label>Seed <input id="seed" type="number" value="1" style="width:70px"></label>
+    <label>Optionen <input id="options" value="{}" style="width:260px" title="JSON, überschreibt DEFAULTS in dev/mass-read.js"></label>
     <button id="start" class="primary">Szenen messen</button>
     <button id="photos">Echte Fotos messen</button>
   </div>
@@ -58,7 +59,11 @@
     const cv = await openCv();
     const variants = await fetch("/api/variants").then((r) => r.json());
     const cardNumbers = new Set(variants.map((v) => v.cardNo));
-    const context = { cv, cardNumbers, variants };
+    const context = { cv, cardNumbers, variants, options: {} };
+    // Options for the reader from the page (JSON), read at every start.
+    function readOptions() {
+      try { context.options = JSON.parse($("options").value || "{}"); } catch { throw new Error("Optionen sind kein gültiges JSON"); }
+    }
     status.textContent = `Bereit. Verfahren: ${METHOD}`;
 
     // Card images, the SAMPLE watermark removed at full size (the number must stay sharp).
@@ -78,11 +83,8 @@
             image = await createImageBitmap(await loadImage(`/ref-images/${variant.file}`));
           }
           cache.set(key, image);
-          if (cache.size > 150) {
-            const [oldest, bitmap] = cache.entries().next().value;
-            bitmap.close();
-            cache.delete(oldest);
-          }
+          // Not closed: the evicted image may still be part of the scene being built.
+          if (cache.size > 150) cache.delete(cache.keys().next().value);
           return image;
         } catch (error) {
           // The dev server occasionally drops a request under load; try again.
@@ -224,6 +226,7 @@
 
     $("start").addEventListener("click", async (event) => {
       event.target.disabled = true;
+      readOptions();
       $("shots").replaceChildren();
       $("corners").replaceChildren();
       const count = Number($("count").value);
@@ -237,8 +240,10 @@
       try {
         for (let s = 0; s < count; s++) {
           const rand = mulberry32(seed * 1000 + s);
-          const columns = choice("columns") ?? 2 + Math.floor(rand() * 4);
-          const perColumn = choice("per-column") ?? 5 + Math.floor(rand() * 11);
+          const columns = choice("columns") ?? 2 + Math.floor(rand() * 3);
+          const perColumn = choice("per-column") ?? 8 + Math.floor(rand() * 8);
+          // Like the real photos: two columns in portrait, more in landscape.
+          const [w, h] = columns <= 2 ? [Math.min(width, height), Math.max(width, height)] : [width, height];
           const n = columns * perColumn;
           status.textContent = `Foto ${s + 1}/${count}: lade ${n} Karten …`;
           const chosen = Array.from({ length: n }, () => variants[Math.floor(rand() * variants.length)]);
@@ -246,7 +251,7 @@
           for (const variant of chosen) cards.push({ variant, image: await cardImage(variant, clean) });
           status.textContent = `Foto ${s + 1}/${count}: erzeuge und lese …`;
           const scene = await makeMassScene(cards, rand, cv, {
-            width, height, columns,
+            width: w, height: h, columns,
             visible: choice("visible"),
             background: $("background").value || null,
             sleeves: $("sleeves").value === "" ? null : $("sleeves").value === "1",
@@ -261,8 +266,9 @@
             const { meta } = scene;
             showShot(scene.frame, `Foto ${s + 1}: ${meta.columns} Spalten × ${meta.perColumn}, sichtbar ${(meta.visible * 100).toFixed(0)} %, ${meta.background}${meta.sleeves ? ", Hüllen" : ""}, Schräglage ${(meta.tilt * 100).toFixed(0)} %, Unschärfe ${meta.blur.toFixed(1)} px`, (ctx, line) => {
               for (const card of scene.cards) drawQuad(ctx, card.corner, "#ffb74d", line);
-              for (const r of scored.result.filter((x) => x.found)) drawQuad(ctx, r.prediction.quad, r.correct ? "#66bb6a" : "#ef5350", line * 1.5);
-              for (const p of scored.falsePositives) drawQuad(ctx, p.quad, "#ef5350", line * 1.5);
+              // cyan: found, not read; green/red: read right/wrong; magenta: nothing there
+              for (const r of scored.result.filter((x) => x.found)) drawQuad(ctx, r.prediction.quad, !r.prediction.cardNo ? "#4fc3f7" : r.correct ? "#66bb6a" : "#ef5350", line * 1.5);
+              for (const p of scored.falsePositives) drawQuad(ctx, p.quad, "#ff40ff", line * 1.5);
             });
           }
           for (const card of scene.cards) {
@@ -288,6 +294,7 @@
 
     $("photos").addEventListener("click", async (event) => {
       event.target.disabled = true;
+      readOptions();
       $("shots").replaceChildren();
       $("corners").replaceChildren();
       const lines = [`Verfahren: ${METHOD}`, ""];
@@ -297,7 +304,7 @@
           status.textContent = "Keine Fotos in build/mass-photos/ gefunden (jpg, png oder webp, je mit gleichnamiger .txt).";
           return;
         }
-        let truthTotal = 0, correctTotal = 0, extraTotal = 0;
+        let truthTotal = 0, correctTotal = 0, extraTotal = 0, foundTotal = 0;
         for (const photo of photos) {
           status.textContent = `Lese ${photo.name} …`;
           const bitmap = await createImageBitmap(await fetch(photo.url).then((r) => r.blob()));
@@ -312,17 +319,19 @@
             if (at >= 0) { remaining.splice(at, 1); correct++; } else extra.push(p.cardNo ?? `„${p.text}“`);
           }
           truthTotal += photo.truth.length; correctTotal += correct; extraTotal += extra.length;
-          lines.push(`${photo.name}: ${bitmap.width}×${bitmap.height}, ${photo.truth.length} Karten laut Liste${photo.listed ? "" : " (keine .txt!)"}, ${correct} richtig, ${(ms / 1000).toFixed(1)} s`);
+          lines.push(`${photo.name}: ${bitmap.width}×${bitmap.height}, ${photo.truth.length} Karten laut Liste${photo.listed ? "" : " (keine .txt!)"}, ${predictions.length} Ecken gefunden, ${correct} richtig gelesen, ${(ms / 1000).toFixed(1)} s`);
+          foundTotal += predictions.length;
           if (remaining.length) lines.push(`  fehlt: ${remaining.join(", ")}`);
-          if (extra.length) lines.push(`  zu viel/falsch: ${extra.join(", ")}`);
+          if (extra.length && predictions.some((p) => p.cardNo)) lines.push(`  zu viel/falsch: ${extra.join(", ")}`);
           showShot(bitmap, `${photo.name}: ${correct}/${photo.truth.length} richtig`, (ctx, line) => {
             for (const p of predictions) {
               const ok = p.cardNo && photo.truth.map(toCardNo).includes(p.cardNo);
-              drawQuad(ctx, p.quad, ok ? "#66bb6a" : "#ef5350", line * 1.5);
+              // cyan: found, not read (yet)
+              drawQuad(ctx, p.quad, !p.cardNo ? "#4fc3f7" : ok ? "#66bb6a" : "#ef5350", line * 1.5);
             }
           });
         }
-        lines.splice(2, 0, `Gesamt: ${correctTotal}/${truthTotal} richtig (${percent(correctTotal, truthTotal)}), ${extraTotal} zu viel/falsch`, "");
+        lines.splice(2, 0, `Gesamt: ${truthTotal} Karten laut Listen, ${foundTotal} Ecken gefunden, ${correctTotal} richtig gelesen (${percent(correctTotal, truthTotal)})`, "");
         status.textContent = lines.join("\n");
       } catch (error) {
         console.error(error);

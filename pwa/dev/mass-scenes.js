@@ -63,8 +63,9 @@ const pick = (value, rand, choices) => value ?? choices[Math.floor(rand() * choi
 export async function makeMassScene(cards, rand, cv, options = {}) {
   const W = options.width ?? 4000, H = options.height ?? 3000;
   const background = pick(options.background, rand, BACKGROUNDS);
-  const columns = Math.min(cards.length, options.columns ?? 2 + Math.floor(rand() * 4));
-  const visible = options.visible ?? 0.15 + rand() * 0.17;
+  const columns = Math.min(cards.length, options.columns ?? 2 + Math.floor(rand() * 3));
+  // Real test photos show 5–8 % of each card; the corner needs at least CORNER.y1 (5.5 %).
+  const visible = options.visible ?? 0.055 + rand() * 0.065;
   const sleeves = options.sleeves ?? rand() < 0.5;
   const perColumn = Math.ceil(cards.length / columns);
 

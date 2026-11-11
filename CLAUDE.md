@@ -174,7 +174,7 @@ Kante), aneinanderliegende Karten verschmelzen, ein 3×3-Block hat sogar das Kar
 Vorgeschlagen (Nutzer entscheidet noch): kleines Segmentierungsnetz auf synthetischen Szenen
 trainieren (PC hat eine RTX 5060), alternativ Regel „mit ~1 cm Abstand auf ruhigen Untergrund“.
 
-## Massenscan: Nummernecke lesen (Stand 11. Nov.: Schritt 1 von 5)
+## Massenscan: Nummernecke lesen (Stand 11. Nov.: Schritt 2 von 5)
 
 Nutzerwunsch: Foto (später live) von Karten, die so übereinanderliegen, dass nur der obere Streifen
 sichtbar ist; die Ecke rechts oben enthält optional `LK`/`SP`, Kartennummer, Rarität (`C`, `U`, `R`, `LR`,
@@ -198,8 +198,31 @@ context)` → `[{ quad, text, cardNo }]`, noch Platzhalter): gefunden/richtig ge
 Untergrund, Hülle und Schrifthöhe, und zeigt die Ecken in Originalgröße. Echte Fotos legt der Nutzer
 nach `build/mass-photos/` (nicht im Repo; Anleitung `LIESMICH.txt`), je mit `<name>.txt` (eine Karte pro
 Zeile, `2 GD01-118` für zwei). Der Dev-Server liefert sie über `/api/mass-photos` und `/mass-photos/`.
-Erste Werte: 12 MP mit ~40 Karten → Nummer ~15 px hoch, in der Vergrößerung gut lesbar. Eine Szene
-braucht am PC ~9 s.
+Eine Szene braucht am PC ~4–9 s.
+
+**Echte Testfotos (11. Nov.):** 14 Fotos (12 MP, hoch oder quer, 2–4 Spalten, Tisch/Spielmatte), 434 Karten,
+meist GD06, ein Foto GD02 + Ressourcen, zwei nur Token. Zwei Listen vom Nutzer, zwölf hat Claude aus
+vergrößerten Ausschnitten abgelesen (Kopfzeile „Von Claude … abgelesen“; Gegenprobe an einem Nutzerfoto
+48/48). Bei gleicher Rarität von Grundkarte und Nachdruck steht die Grundkarte drin. Erkenntnisse:
+Pro Karte sind nur **5–8 %** sichtbar (die Simulation lag erst bei 15–32 %, jetzt 5,5–12 %), dafür ist
+die Nummer ~20–35 px hoch. Fast alle Reiter schwarz mit weißer Schrift; LK-Karten mit `LK`-Kästchen.
+Vorsicht beim Ansehen großer Canvas im Browser-Fenster: Der Screenshot zeigt nur ~670 CSS-px Breite, ein
+800 px breites Bild wird rechts abgeschnitten (dadurch zunächst falsch „vierte Spalte abgeschnitten“).
+
+**Schritt 2 (fertig): Nummernzeilen finden** (`findCorners()` in `pwa/dev/mass-read.js`, Optionen als JSON
+im Feld „Optionen“ der Messseite). Foto auf 2000 px, Graustufen; White-Top-Hat (helle Schrift) und
+Black-Hat (dunkle Schrift auf Silber/Gold), Kernel 13 px; Schwelle max(45, Otsu) in drei Stufen
+(×1, ×0,7, ×0,5, sonst fehlen kontrastarme Reiter); zusammenhängende Striche in Zeichenhöhe sind
+„Teile“, ein breites Teil zählt als Breite/(0,62·Höhe) Zeichen (bei 2000 px kleben die Ziffern
+zusammen); Nachbarteile gleicher Höhe auf einer Linie werden verkettet (Union-Find); eine Zeile braucht
+≥ 5 Zeichen in ≥ 2 Teilen; Dubletten raus; Zeilenhöhe 0,5–2× Median. ~150 ms pro Foto am PC.
+Ergebnis: Simulation 89 % der Ecken gefunden (vorher 71 %), echtes Foto `20261101_204019` von Hand
+gezählt ~45/48. Dafür ~2 Fehlfunde pro Karte (Bildmotive, Effekttext der untersten Karten); die sortiert
+Schritt 3 aus (Abgleich gegen die bekannten Nummern). Ausprobiert und schlechter: morphologisches
+Schließen statt Verketten (klebt die Zeile an helle Kartenkanten, echtes Foto 2/12 pro Spalte),
+niedrigere feste Schwelle ohne Otsu (Rauschen verschmilzt), ≥ 3 Teile pro Zeile (weniger Fehlfunde,
+aber auf echten Fotos verschmelzen Raritätskasten und Sechseck oft mit der Nummer). Die Kästchen
+umfassen manchmal nicht die ganze Nummer (z. B. ohne „T-“); das Lesen schaut daher etwas breiter.
 
 
 - **Service Worker** (`pwa/sw.js`): Caches `gcg-shell-<VERSION>` (HTML/CSS/JS, vorab geladen),
