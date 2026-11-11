@@ -13,11 +13,26 @@
   <link rel="stylesheet" href="css/app.css">
 </head>
 <body>
-  <!-- Scanner: header plus viewer fill exactly one screen, so guide, hit and buttons are all visible at once. -->
-  <main id="scan-view" class="view screen">
+  <!-- Start page: pick the scanner, the list or the settings. -->
+  <main id="home-view" class="view">
     <header class="bar">
       <h1>GCG Scanner</h1>
       <span id="update" class="update" hidden>Neue Version – <button id="reload" class="link">neu laden</button></span>
+    </header>
+    <p id="home-status" class="muted small">Lade Erkennung …</p>
+    <nav class="home-menu">
+      <button id="go-scan" class="primary">Einzelkarten scannen<small>Eine Karte nach der anderen in den Rahmen halten</small></button>
+      <button id="go-mass" disabled>Massenscan<small>Kommt noch: viele Karten auf einem Foto</small></button>
+      <button id="go-list">Erkannte Karten (<span id="home-count">0</span>)<small>Varianten prüfen, CSV für ExBurst</small></button>
+      <button id="go-settings">Einstellungen<small>Scanner-Zeiten, Erkennung, Speicher</small></button>
+    </nav>
+  </main>
+
+  <!-- Scanner: header plus viewer fill exactly one screen, so guide, hit and buttons are all visible at once. -->
+  <main id="scan-view" class="view screen" hidden>
+    <header class="bar">
+      <button id="scan-back" class="icon" aria-label="Zur Startseite">‹</button>
+      <h1>Einzelkarten</h1>
     </header>
 
     <div class="viewer" id="viewer">
@@ -50,7 +65,7 @@
   <!-- Overview after scanning: check variants, adjust counts, export. -->
   <main id="list-view" class="view" hidden>
     <header class="bar">
-      <button id="back" class="icon" aria-label="Zurück zum Scanner">‹</button>
+      <button id="back" class="icon" aria-label="Zurück">‹</button>
       <h1>Erkannte Karten (<span id="list-count">0</span>)</h1>
     </header>
     <form id="unlock" class="unlock" hidden>
@@ -74,18 +89,37 @@
     <!-- No import API: copy the CSV above, then paste it on ExBurst's collection import page. -->
     <a id="exburst" class="button wide" href="https://exburst.dev/gundam/collection/sets" target="_blank" rel="noopener noreferrer">ExBurst-Collection öffnen ↗</a>
     <button id="scan-more" class="wide">Weiter scannen</button>
+    <button id="clear" class="danger wide">Liste leeren</button>
+  </main>
 
-    <details class="tech">
-      <summary>Einstellungen &amp; Technik</summary>
-      <label>Erkennung <select id="backend"><option value="webgpu">WebGPU (schnell)</option><option value="wasm">WebAssembly</option></select></label>
+  <!-- Settings: scanner timings (live), recognition (reloads the app), storage. -->
+  <main id="settings-view" class="view" hidden>
+    <header class="bar">
+      <button id="settings-back" class="icon" aria-label="Zurück">‹</button>
+      <h1>Einstellungen</h1>
+    </header>
+    <section class="settings">
+      <h2>Einzelkarten-Scanner</h2>
+      <label for="t-min-show">Treffer mindestens anzeigen <span><input id="t-min-show" type="number" min="0" max="3000" step="50" inputmode="numeric"> ms</span></label>
+      <p class="muted small">So lange bleibt ein Treffer stehen, auch wenn kurz eine andere Karte besser passt.</p>
+      <label for="t-click-lock">Tippsperre nach Wechsel <span><input id="t-click-lock" type="number" min="0" max="2000" step="50" inputmode="numeric"> ms</span></label>
+      <p class="muted small">So lange reagieren ✕ und Übernehmen nach einem neuen Treffer nicht.</p>
+      <label for="t-window">Glättung <span><input id="t-window" type="number" min="100" max="2000" step="50" inputmode="numeric"> ms</span></label>
+      <p class="muted small">Über diesen Zeitraum werden die Treffer gemittelt: länger ist ruhiger, aber träger.</p>
+      <label for="t-stable">Stabil nach <span><input id="t-stable" type="number" min="1" max="15" step="1" inputmode="numeric"> Bildern</span></label>
+      <p class="muted small">So viele Bilder in Folge muss ein Treffer vorn liegen, bis der Rahmen grün wird und er übernommen werden kann.</p>
+      <button id="timing-reset">Standardwerte</button>
+
+      <h2>Erkennung</h2>
+      <p class="muted small">Änderungen hier laden die App neu.</p>
+      <label>Rechenweg <select id="backend"><option value="webgpu">WebGPU (schnell)</option><option value="wasm">WebAssembly</option></select></label>
       <label>Index <select id="index-kind"><option value="compact">kompakt (2,8 MB)</option><option value="full">voll (11 MB)</option></select></label>
-      <label><input id="rectify" type="checkbox" checked> Karte entzerren (Kartenränder suchen)</label>
-      <p id="storage" class="muted"></p>
-      <div class="row">
-        <button id="forget-images">Kartenbilder vom Handy löschen</button>
-        <button id="clear" class="danger">Liste leeren</button>
-      </div>
-    </details>
+      <label class="check"><input id="rectify" type="checkbox" checked> Karte entzerren (Kartenränder suchen)</label>
+
+      <h2>Speicher</h2>
+      <p id="storage" class="muted small"></p>
+      <button id="forget-images">Kartenbilder vom Handy löschen</button>
+    </section>
   </main>
 
   <dialog id="variant-dialog">

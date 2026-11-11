@@ -114,9 +114,20 @@ button.danger { border-color: var(--bad); color: var(--bad); }
 .empty { text-align: center; padding: 24px 8px; }
 .export { display: flex; gap: 6px; margin-top: 16px; }
 .export button { flex: 1; padding: 10px 6px; }
-.tech { margin-top: 20px; color: var(--muted); font-size: 14px; }
-.tech summary { cursor: pointer; padding: 6px 0; }
-.tech label { display: flex; gap: 8px; align-items: center; margin: 8px 0; }
+/* ---- Start page and settings ---------------------------------------------------------------- */
+
+.home-menu { display: flex; flex-direction: column; gap: 10px; margin-top: 12px; }
+.home-menu button { text-align: left; padding: 14px 16px; font-size: 18px; font-weight: 600; }
+.home-menu small { display: block; margin-top: 2px; font-size: 13px; font-weight: normal; opacity: 0.75; }
+.settings h2 { margin-top: 24px; }
+.settings label { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin: 14px 0 2px; }
+.settings label.check { justify-content: flex-start; }
+.settings p.small { margin: 2px 0 6px; }
+.settings input[type="number"] {
+  width: 84px; font: inherit; text-align: right; color: var(--text); background: var(--panel);
+  border: 1px solid #3a424d; border-radius: 8px; padding: 6px 8px;
+}
+.settings > button { margin-top: 10px; }
 
 /* ---- Variant picker ------------------------------------------------------------------------- */
 

@@ -19,8 +19,13 @@ Der Nutzer kommt aus der Webentwicklung.
   1290 Karten, 2205 Druckvarianten. Details: `tools/carddb/README.md`.
 - **Plattform entschieden: PWA** in `pwa/`, veröffentlicht über GitHub Pages
   (`.github/workflows/pages.yml`). Details und Abläufe: `pwa/README.md`.
-  - Scanner (eine Karte im Rahmen) → *Fertig* → Übersicht `#liste` mit Bildern, Mengen,
-    **Variantenauswahl** und CSV teilen/kopieren/speichern. Liste bleibt in `localStorage`.
+  - Startseite (seit 11. Nov., Nutzerwunsch) mit *Einzelkarten scannen*, *Massenscan* (noch deaktiviert),
+    *Erkannte Karten* und *Einstellungen*.
+  - Scanner `#scan` (eine Karte im Rahmen, Kamera startet beim Öffnen) → *Fertig* → Übersicht `#liste`
+    mit Bildern, Mengen, **Variantenauswahl** und CSV teilen/kopieren/speichern. Liste bleibt in
+    `localStorage`.
+  - Einstellungen `#einstellungen`: Scanner-Zeiten (siehe „Scanner-Robustheit“), Rechenweg, Index,
+    Entzerren, Speicher/Kartenbilder löschen. „Liste leeren“ steht in der Übersicht.
   - ExBurst-Import vorerst von Hand: Button *ExBurst-Collection öffnen* → `https://exburst.dev/gundam/collection/sets`
     (vom Nutzer genannt), dort die kopierte CSV einfügen.
   - Offline-fähig über Service Worker. **Kartenbilder aus verschlüsselten Paketen** (`pwa/images/`,
@@ -181,8 +186,13 @@ trainieren (PC hat eine RTX 5060), alternativ Regel „mit ~1 cm Abstand auf ruh
 - Erster Besuch lädt ~50 MB (WebGPU-Runtime 26 MB, OpenCV.js 10 MB, Modell 8,8 MB, Index 3 MB),
   danach offline. Der volle Index (11 MB) kommt nur dazu, wenn er gewählt wird.
   `navigator.storage.persist()` wird angefragt.
-- Zurück-Taste: Die Übersicht ist `#liste`. Wurde sie aus dem Scanner geöffnet, ist „Zurück“
-  `history.back()`, sonst wird nur der Hash entfernt.
+- Ansichten und Zurück-Taste: Startseite (kein Hash), `#scan`, `#liste`, `#einstellungen` (`VIEWS` in
+  `app.js`). `go()` legt per `pushState` einen Verlaufseintrag `{ app, from }` an, `showView()` zeigt die
+  Ansicht und startet/stoppt die Kamera (läuft nur in `#scan`). „‹“ und Android-Zurück gehen eine Ansicht
+  zurück. Eine direkt geöffnete Ansicht (Neuladen) hat keinen App-Eintrag davor, dann ersetzt
+  „‹“ sie durch die Startseite, statt die App zu verlassen. *Weiter scannen* in der Liste geht zurück
+  zum Scanner bzw. ersetzt die Liste durch ihn, wenn sie von der Startseite kam. Getestet alle Wege
+  inkl. Neuladen, Kamera nur im Scanner `live`.
 - In `app.js` steht `await boot()` am Dateiende, sonst greift `boot()` auf noch nicht
   initialisierte `let`-Variablen zu (TDZ-Fehler).
 - `style.css` enthält `[hidden] { display: none !important; }`. Ohne diese Regel überschreiben
@@ -224,10 +234,12 @@ trainieren (PC hat eine RTX 5060), alternativ Regel „mit ~1 cm Abstand auf ruh
   läuft sie wieder an.
 - Übernehmen hat eine Sperre von 600 ms gegen Doppeltipps. Ein zweites Exemplar ist ein zweiter Tipp.
 - **Treffer halten und Klicksperre** (Nutzerwunsch 5. Nov., Treffer wechselten zu schnell, man erwischte
-  die falsche Karte): Ein angezeigter Treffer bleibt mindestens `MIN_SHOW_MS` = 700 ms, solange er in
+  die falsche Karte): Ein angezeigter Treffer bleibt mindestens `minShow` = 700 ms, solange er in
   der Glättung noch vorkommt. Nach jedem Wechsel ignorieren ✕, Übernehmen und Treffer-Tipp
-  `CLICK_LOCK_MS` = 400 ms lang Tipps (ausgegraut). Übernehmen braucht zusätzlich „stabil“: Der
-  angezeigte Treffer führt auch die Glättung seit 3 Bildern an. Test mit Kamera, die alle 150 ms zwischen
+  `clickLock` = 400 ms lang Tipps (ausgegraut). Übernehmen braucht zusätzlich „stabil“: Der
+  angezeigte Treffer führt auch die Glättung seit `stableFrames` = 3 Bildern an. Seit 11. Nov. sind diese
+  Werte und die Glättung (`window` = 500 ms) in den Einstellungen änderbar (Nutzerwunsch), gespeichert
+  als JSON in `gcg-scanner-timing`, mit Grenzen (`TIMING_LIMITS`) und *Standardwerte*; gilt sofort. Test mit Kamera, die alle 150 ms zwischen
   zwei Karten springt: Wechsel frühestens nach ~740 ms. Popups zu übernommenen/ausgeschlossenen Karten
   zeigen das Kartenbild (`toast(message, variant)`).
 - **✕ neben dem Treffer** schließt eine falsch erkannte Variante samt ihrer gleich aussehenden Nachdrucke

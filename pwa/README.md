@@ -3,13 +3,14 @@
 Erkennt Gundam-Card-Game-Karten mit der Handykamera, sammelt sie in einer Liste und exportiert
 sie im ExBurst-Importformat. Läuft komplett im Browser und nach dem ersten Laden auch offline.
 
-Ablauf in der App: Kamera starten → Karte in den Rahmen halten → grüner Rahmen → *Übernehmen*
+Ablauf in der App: Startseite → *Einzelkarten scannen* → Karte in den Rahmen halten → grüner Rahmen → *Übernehmen*
 (oder auf den Treffer tippen) → *Fertig* → Varianten prüfen, Mengen anpassen → *CSV teilen /
 kopieren / speichern* → *ExBurst-Collection öffnen* (exburst.dev/gundam/collection/sets) und dort beim
 Import einfügen.
 
 Falsch erkannt? Das ✕ neben dem Treffer schließt die Karte aus, bis eine Karte übernommen wird.
 Beim Booster-Öffnen oben rechts (▾) das Set wählen, dann vergleicht die App nur mit dessen Karten.
+Unter *Einstellungen* lassen sich die Scanner-Zeiten anpassen (Anzeigedauer, Tippsperre, Glättung).
 
 ## Aufbau
 

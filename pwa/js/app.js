@@ -13,15 +13,17 @@ const video = $("video");
 const guide = $("guide");
 const stats = $("stats");
 
-// Hits are averaged over this time window so names and percentages do not jump every frame.
-const WINDOW_MS = 500;
 const SEARCH_K = 5;
-// A match counts as stable once the same variant leads the smoothed ranking this many frames in a row.
-const STABLE_FRAMES = 3;
-// A shown hit stays at least this long, even if another card briefly matches better, and the
-// buttons ignore taps for a moment after every change, so a tap never hits a card that just appeared.
-const MIN_SHOW_MS = 700;
-const CLICK_LOCK_MS = 400;
+// Scanner timings, adjustable on the settings page (stored in localStorage):
+// window: hits are averaged over this time so names and percentages do not jump every frame.
+// stableFrames: a match counts as stable once it leads the smoothed ranking this many frames in a row.
+// minShow: a shown hit stays at least this long, even if another card briefly matches better.
+// clickLock: the buttons ignore taps this long after every change, so a tap never hits a card that
+// just appeared.
+const TIMING_KEY = "gcg-scanner-timing";
+const DEFAULT_TIMING = { minShow: 700, clickLock: 400, window: 500, stableFrames: 3 };
+const TIMING_LIMITS = { minShow: [0, 3000], clickLock: [0, 2000], window: [100, 2000], stableFrames: [1, 15] };
+const TIMING_INPUTS = { minShow: "t-min-show", clickLock: "t-click-lock", window: "t-window", stableFrames: "t-stable" };
 // Single failures (e.g. a frame that is not ready yet) are skipped; after this many in a row the
 // scan stops with a message instead of freezing silently (e.g. lost WebGPU device).
 const MAX_ERRORS = 5;
@@ -33,10 +35,12 @@ const SET_KEY = "gcg-scanner-set";
 // The guide crop only has to stay sharp at the model's 224 px, so the detector can work on a small copy.
 const DETECT_OPTIONS = { warpSide: 640 };
 const LIST_HASH = "#liste";
+const SCAN_HASH = "#scan";
+const SETTINGS_HASH = "#einstellungen";
 
 let index, embedder, collection, detector = null;
 let stream = null, track = null, generation = 0, cameraOn = false, resumeCamera = false;
-// best: the hit shown (held for MIN_SHOW_MS); lastBest/streak: the current leader of the smoothing.
+// best: the hit shown (held for timing.minShow); lastBest/streak: the current leader of the smoothing.
 let recent = [], best = null, lastBest = null, streak = 0, shownId = "", shownSince = 0;
 let focusInfo = "", focusTimer = 0;
 const siblingCache = new Map();
@@ -44,8 +48,11 @@ const siblingCache = new Map();
 // recognized are skipped until a card is taken, the camera stops or the list is opened.
 let scanSet = "", allowed = null;
 const excluded = new Set();
+let timing = loadTiming();
 
 async function boot() {
+  showView();
+  showTiming();
   const worker = await registerServiceWorker();
   navigator.storage?.persist?.().catch(() => {});
 
@@ -59,24 +66,32 @@ async function boot() {
   $("rectify").checked = rectify;
 
   try {
-    stats.textContent = worker ? "Lade Erkennung …" : "Lade Erkennung … (ohne Offline-Speicher)";
+    status(worker ? "Lade Erkennung …" : "Lade Erkennung … (ohne Offline-Speicher)");
     [index, embedder] = await Promise.all([loadIndex({ full }), createEmbedder({ backend })]);
   } catch (error) {
-    stats.textContent = `Fehler beim Laden: ${error.message}`;
+    status(`Fehler beim Laden: ${error.message}`);
     return;
   }
   // OpenCV.js (~10 MB) loads in the worker in the background; until then the guide crop is used.
   if (rectify) detector = createDetector();
   $("backend").value = embedder.backend; // shows the wasm fallback if WebGPU failed
-  stats.textContent = `Bereit · ${index.variants.length} Varianten · ${embedder.backend} · Index ${index.full ? "voll" : "kompakt"}`;
+  status(`Bereit · ${index.variants.length} Varianten · ${embedder.backend} · Index ${index.full ? "voll" : "kompakt"}`);
   $("camera").disabled = false;
 
   fillSetList();
   collection = new Collection(index);
-  collection.onChange(() => { renderCount(); if (!$("list-view").hidden) renderList(); });
+  collection.onChange(() => { renderCount(); if (currentView === LIST_HASH) renderList(); });
   renderCount();
-  showView();
+  // The view was shown before loading; now fill it (list) or start the camera (scanner).
+  if (currentView === LIST_HASH) renderList();
+  if (currentView === SCAN_HASH) startCamera();
   updateImages(); // in the background: new image packs since the last visit
+}
+
+// Loading state and errors, on the start page and in the scanner.
+function status(text) {
+  stats.textContent = text;
+  $("home-status").textContent = text;
 }
 
 // ---- Service worker (offline use, image cache, update notice) ---------------------------------
@@ -134,45 +149,105 @@ $("backend").addEventListener("change", (event) => {
   location.reload();
 });
 
-// ---- Views: scanner and list (#liste, so the Android back button returns to the scanner) -------
+// ---- Views: start page, scanner (#scan), list (#liste), settings (#einstellungen) --------------
+// Every view has its own history entry, so the Android back button goes back one view.
 
-// openedList: the list was opened from the scanner, so "back" can pop that history entry. Opened
-// directly (reload on #liste), it must not leave the app, so the hash is just removed.
-let openedList = false;
-$("done").addEventListener("click", () => {
-  clearExcluded();
-  openedList = true;
-  location.hash = LIST_HASH;
-});
-$("back").addEventListener("click", () => {
-  if (openedList) {
+const VIEWS = { "": "home-view", [SCAN_HASH]: "scan-view", [LIST_HASH]: "list-view", [SETTINGS_HASH]: "settings-view" };
+let currentView = null;
+
+// Opens a view as a new history entry; `from` remembers where it was opened.
+function go(hash) {
+  history.pushState({ app: true, from: currentView }, "", hash || location.pathname + location.search);
+  showView();
+}
+
+// Back inside the app. A view opened directly (reload, link) has no app entry before it, so it is
+// replaced by the start page instead of leaving the app.
+function goBack() {
+  if (history.state?.app) {
     history.back();
   } else {
     history.replaceState(null, "", location.pathname + location.search);
     showView();
   }
+}
+
+$("go-scan").addEventListener("click", () => go(SCAN_HASH));
+$("go-list").addEventListener("click", () => go(LIST_HASH));
+$("go-settings").addEventListener("click", () => go(SETTINGS_HASH));
+for (const id of ["scan-back", "back", "settings-back"]) $(id).addEventListener("click", goBack);
+$("done").addEventListener("click", () => {
+  clearExcluded();
+  go(LIST_HASH);
 });
-$("scan-more").addEventListener("click", () => $("back").click());
+// From the scanner: back to it. From the start page: the list entry becomes the scanner.
+$("scan-more").addEventListener("click", () => {
+  if (history.state?.from === SCAN_HASH) {
+    history.back();
+  } else {
+    history.replaceState(history.state, "", SCAN_HASH);
+    showView();
+  }
+});
+window.addEventListener("popstate", showView);
 window.addEventListener("hashchange", showView);
 
 function showView() {
-  const list = location.hash === LIST_HASH;
-  if (!list) openedList = false;
-  if (list && cameraOn) {
-    resumeCamera = true;
+  const hash = location.hash in VIEWS ? location.hash : "";
+  if (hash === currentView) return;
+  currentView = hash;
+  for (const [view, id] of Object.entries(VIEWS)) $(id).hidden = view !== hash;
+  $("menu").hidden = true;
+  showSet();
+  resumeCamera = false;
+  if (hash === SCAN_HASH) {
+    if (embedder) startCamera(); // otherwise boot() starts it once the model is loaded
+  } else if (cameraOn) {
     stopCamera();
   }
-  $("scan-view").hidden = list;
-  $("list-view").hidden = !list;
-  if (list) {
-    renderList();
-    renderStorage();
-    window.scrollTo(0, 0);
-  } else if (resumeCamera) {
-    resumeCamera = false;
-    startCamera();
-  }
+  if (hash === LIST_HASH && collection) renderList();
+  if (hash === SETTINGS_HASH) renderStorage();
+  window.scrollTo(0, 0);
 }
+
+// ---- Scanner timings (settings page) -----------------------------------------------------------
+
+function loadTiming() {
+  let saved = {};
+  try { saved = JSON.parse(localStorage.getItem(TIMING_KEY)) ?? {}; } catch {}
+  const result = { ...DEFAULT_TIMING };
+  for (const key of Object.keys(result)) {
+    const value = Number(saved[key]);
+    if (saved[key] != null && Number.isFinite(value)) result[key] = clampTiming(key, value);
+  }
+  return result;
+}
+
+function clampTiming(key, value) {
+  const [min, max] = TIMING_LIMITS[key];
+  return Math.min(max, Math.max(min, Math.round(value)));
+}
+
+function showTiming() {
+  for (const [key, id] of Object.entries(TIMING_INPUTS)) $(id).value = timing[key];
+}
+
+// Applies at once, also to a running scan.
+for (const [key, id] of Object.entries(TIMING_INPUTS)) {
+  $(id).addEventListener("change", (event) => {
+    const value = Number(event.target.value);
+    if (event.target.value !== "" && Number.isFinite(value)) {
+      timing = { ...timing, [key]: clampTiming(key, value) };
+      try { localStorage.setItem(TIMING_KEY, JSON.stringify(timing)); } catch {}
+    }
+    showTiming();
+  });
+}
+$("timing-reset").addEventListener("click", () => {
+  timing = { ...DEFAULT_TIMING };
+  try { localStorage.removeItem(TIMING_KEY); } catch {}
+  showTiming();
+});
 
 // ---- Camera -----------------------------------------------------------------------------------
 
@@ -187,7 +262,7 @@ document.addEventListener("visibilitychange", () => {
   if (document.hidden && cameraOn) {
     resumeCamera = true;
     stopCamera();
-  } else if (!document.hidden && resumeCamera && $("list-view").hidden) {
+  } else if (!document.hidden && resumeCamera && currentView === SCAN_HASH) {
     resumeCamera = false;
     startCamera();
   }
@@ -384,7 +459,7 @@ async function loop(gen) {
     lastBest = top?.variant.id ?? null;
     if (!top) {
       best = null;
-    } else if (best && top.variant.id !== best.variant.id && t1 - shownSince < MIN_SHOW_MS && scores.has(best.variant.id)) {
+    } else if (best && top.variant.id !== best.variant.id && t1 - shownSince < timing.minShow && scores.has(best.variant.id)) {
       best = { variant: best.variant, score: scores.get(best.variant.id) }; // hold the shown hit a bit longer
     } else {
       if (top.variant.id !== best?.variant.id) shownSince = t1;
@@ -403,11 +478,11 @@ async function loop(gen) {
   }
 }
 
-// Averages the scores of the last WINDOW_MS. A variant missing from a frame's top list counts with
+// Averages the scores of the last timing.window ms. A variant missing from a frame's top list counts with
 // that frame's lowest listed score (its real score is at most that), so one lucky frame cannot win.
 function smooth(now, matches) {
   recent.push({ t: now, matches });
-  while (recent[0].t < now - WINDOW_MS) recent.shift();
+  while (recent[0].t < now - timing.window) recent.shift();
   const variants = new Map();
   for (const frame of recent) for (const m of frame.matches) variants.set(m.variant.id, m.variant);
   let top = null;
@@ -426,9 +501,9 @@ function smooth(now, matches) {
 }
 
 // Stable (green) = the shown hit also leads the smoothing for a few frames. Taking needs that; both
-// buttons also wait CLICK_LOCK_MS after the shown hit changed.
-const isStable = () => !!best && best.variant.id === lastBest && streak >= STABLE_FRAMES;
-const isSettled = (now = performance.now()) => !!best && now - shownSince >= CLICK_LOCK_MS;
+// buttons also wait timing.clickLock ms after the shown hit changed.
+const isStable = () => !!best && best.variant.id === lastBest && streak >= timing.stableFrames;
+const isSettled = (now = performance.now()) => !!best && now - shownSince >= timing.clickLock;
 function updateButtons(now) {
   const settled = isSettled(now);
   guide.classList.toggle("stable", isStable());
@@ -577,6 +652,7 @@ function renderCount() {
   const total = collection.total;
   $("scan-count").textContent = total;
   $("list-count").textContent = total;
+  $("home-count").textContent = total;
 }
 
 function renderList() {
@@ -741,10 +817,8 @@ function imagesChanged(message) {
   if (message) toast(message);
   shownId = ""; // rebuild the hit tile with the image
   renderHit();
-  if (!$("list-view").hidden) {
-    renderList();
-    renderStorage();
-  }
+  if (currentView === LIST_HASH) renderList();
+  if (currentView === SETTINGS_HASH) renderStorage();
 }
 
 $("unlock").addEventListener("submit", async (event) => {
