@@ -19,8 +19,8 @@ Der Nutzer kommt aus der Webentwicklung.
   1290 Karten, 2205 Druckvarianten. Details: `tools/carddb/README.md`.
 - **Plattform entschieden: PWA** in `pwa/`, veröffentlicht über GitHub Pages
   (`.github/workflows/pages.yml`). Details und Abläufe: `pwa/README.md`.
-  - Startseite (seit 11. Nov., Nutzerwunsch) mit *Einzelkarten scannen*, *Massenscan* (noch deaktiviert),
-    *Erkannte Karten* und *Einstellungen*.
+  - Startseite (seit 11. Nov., Nutzerwunsch) mit *Einzelkarten scannen*, *Massenscan* (`#masse`, siehe
+    „Massenscan“), *Erkannte Karten* und *Einstellungen*.
   - Scanner `#scan` (eine Karte im Rahmen, Kamera startet beim Öffnen) → *Fertig* → Übersicht `#liste`
     mit Bildern, Mengen, **Variantenauswahl** und CSV teilen/kopieren/speichern. Liste bleibt in
     `localStorage`.
@@ -174,7 +174,7 @@ Kante), aneinanderliegende Karten verschmelzen, ein 3×3-Block hat sogar das Kar
 Vorgeschlagen (Nutzer entscheidet noch): kleines Segmentierungsnetz auf synthetischen Szenen
 trainieren (PC hat eine RTX 5060), alternativ Regel „mit ~1 cm Abstand auf ruhigen Untergrund“.
 
-## Massenscan: Nummernecke lesen (Stand 11. Nov.: Schritt 3 von 5)
+## Massenscan: Nummernecke lesen (Stand 11. Nov.: Schritte 1–3 und 5 fertig, 4 offen)
 
 Nutzerwunsch: Foto (später live) von Karten, die so übereinanderliegen, dass nur der obere Streifen
 sichtbar ist; die Ecke rechts oben enthält optional `LK`/`SP`, Kartennummer, Rarität (`C`, `U`, `R`, `LR`,
@@ -193,7 +193,7 @@ Kamera-App, Auswertung im Worker, Korrektur durch Antippen). Tesseract.js eher n
 5–15 Karten, 15–32 % sichtbar, Untergrund, Hüllen, Drehung, Schräglage, Licht, Unschärfe, Rauschen, JPEG;
 bekannt ist pro Karte das Viereck der Nummernecke (`CORNER` in Kartenanteilen, `TEXT_HEIGHT` = 1,7 %
 der Kartenhöhe). Karten mit SAMPLE-Entfernung in voller Größe (`cleanImage(..., { scale: 1 })`).
-`pwa/dev/mass-eval.html` misst das Verfahren aus `pwa/dev/mass-read.js` (`readCorners(bitmap,
+`pwa/dev/mass-eval.html` misst das Verfahren aus `pwa/js/mass-read.js` (`readCorners(bitmap,
 context)` → `[{ quad, text, cardNo }]`, noch Platzhalter): gefunden/richtig gelesen/falsch, nach
 Untergrund, Hülle und Schrifthöhe, und zeigt die Ecken in Originalgröße. Echte Fotos legt der Nutzer
 nach `build/mass-photos/` (nicht im Repo; Anleitung `LIESMICH.txt`), je mit `<name>.txt` (eine Karte pro
@@ -209,7 +209,7 @@ die Nummer ~20–35 px hoch. Fast alle Reiter schwarz mit weißer Schrift; LK-Ka
 Vorsicht beim Ansehen großer Canvas im Browser-Fenster: Der Screenshot zeigt nur ~670 CSS-px Breite, ein
 800 px breites Bild wird rechts abgeschnitten (dadurch zunächst falsch „vierte Spalte abgeschnitten“).
 
-**Schritt 2 (fertig): Nummernzeilen finden** (`findCorners()` in `pwa/dev/mass-read.js`, Optionen als JSON
+**Schritt 2 (fertig): Nummernzeilen finden** (`findCorners()` in `pwa/js/mass-read.js`, Optionen als JSON
 im Feld „Optionen“ der Messseite). Foto auf 2000 px, Graustufen; White-Top-Hat (helle Schrift) und
 Black-Hat (dunkle Schrift auf Silber/Gold), Kernel 13 px; Schwelle max(45, Otsu) in drei Stufen
 (×1, ×0,7, ×0,5, sonst fehlen kontrastarme Reiter); zusammenhängende Striche in Zeichenhöhe sind
@@ -224,7 +224,7 @@ niedrigere feste Schwelle ohne Otsu (Rauschen verschmilzt), ≥ 3 Teile pro Zeil
 aber auf echten Fotos verschmelzen Raritätskasten und Sechseck oft mit der Nummer). Die Kästchen
 umfassen manchmal nicht die ganze Nummer (z. B. ohne „T-“); das Lesen schaut daher etwas breiter.
 
-**Schritt 3 (fertig): Nummer lesen** (`pwa/dev/mass-ocr.js`, über `readCorners()` in `mass-read.js`).
+**Schritt 3 (fertig): Nummer lesen** (`pwa/js/mass-ocr.js`, über `readCorners()` in `mass-read.js`).
 - Zeichenmodelle aus den Referenzbildern: Ecke `[380, 0, 220, 46]` (Schrift ~14 px) von Karten mit dunklem
   Reiter, in Zeichen zerlegt (Anzahl muss zur bekannten Nummer passen; ~260 von 400 Bildern), jedes Zeichen
   mit drei Unschärfen und drei Verschiebungen → ~16 000 Beispiele. Daraus **LDA** (gemeinsame Kovarianz mit
@@ -255,7 +255,22 @@ umfassen manchmal nicht die ganze Nummer (z. B. ohne „T-“); das Lesen schaut
   fast alle als „0/8/D“ gelesen (Bereichsunterschied Referenz ↔ Foto); ~10 % der Reiter findet Schritt 2
   nicht; Silber-/Gold-Reiter haben keine eigenen Zeichenbeispiele. Wahrscheinlich größter Hebel: kleine
   neuronale Netze (Finden + Lesen) auf echten und simulierten Ausschnitten trainieren (PyTorch, RTX 5060;
-  neue Abhängigkeit, mit dem Nutzer abstimmen).
+  neue Abhängigkeit, mit dem Nutzer abstimmen). Nutzer wollte am 11. Nov. erst den Einbau in die App.
+
+**Schritt 5 (fertig, 11. Nov.): in der App** (`#masse`, `pwa/js/mass.js`, Worker `pwa/js/mass-worker.js`).
+- Foto über `<input type="file" capture="environment">` (native Kamera, volle Auflösung) oder aus der
+  Galerie; `createImageBitmap(file)` berücksichtigt die EXIF-Drehung wie das angezeigte `<img>`.
+- Der Worker (klassisch wegen OpenCV.js, Module per `import()`) bekommt beim ersten Foto das
+  Lesemodell `data/ocr-model.json` (LDA, ~40 KB, Hash `ocr` in `data/index.json`) und alle
+  Kartennummern; dann ~1–2 s pro Foto am PC (Handy noch nicht gemessen).
+- Anzeige: Foto mit SVG-Rahmen je gelesener Karte (Antippen schließt aus/ein, gestrichelt rot),
+  *Foto vergrößern* (3×, scrollbar, Nummern links neben den Rahmen), darunter die Karten gruppiert,
+  Button übernimmt alle eingeschlossenen in die Liste.
+- Variante: noch nicht bestimmt (Schritt 4). Übernommen wird die Grundkarte; hat die Nummer mehrere
+  Varianten, setzt `Collection.add(..., { unsure: true })` das Kennzeichen `unsure` (gespeichert), und
+  die Liste zeigt „Variante prüfen (N Varianten, Massenscan)“, bis eine gewählt ist.
+- Lesemodell neu bauen (nach neuem Set): `dev/mass-eval.html` → *Lesemodell speichern* (Dev-Server
+  `POST /api/ocr-model`; `store_index` behält den `ocr`-Eintrag), dann `pwa/data/` committen.
 
 
 - **Service Worker** (`pwa/sw.js`): Caches `gcg-shell-<VERSION>` (HTML/CSS/JS, vorab geladen),
@@ -348,6 +363,11 @@ umfassen manchmal nicht die ganze Nummer (z. B. ohne „T-“); das Lesen schaut
 - Lokal funktioniert manches, was auf Pages scheitert (z. B. ExBursts Hotlink-Schutz lässt
   `localhost` durch). Externe Abhängigkeiten mit einem echten Referrer (`curl -H "Referer: …"`)
   oder auf der Live-Seite prüfen.
+- **Service Worker im Browser-Fenster (11. Nov.):** Anfragen, die der Service Worker selbst ans Netz
+  stellt, kamen im Browser-Fenster nicht mehr beim Dev-Server an (im Log nichts); alte Dateien lieferte
+  er aus dem Cache, neue (z. B. ein neuer Worker) scheiterten mit `ERR_FAILED`, zuletzt sogar die Seite.
+  Am Handy/auf Pages kein Problem. Zum Testen `/?nosw` (App registriert dann keinen Service Worker);
+  eine bestehende Registrierung vorher über eine `dev/`-Seite abmelden (die umgeht der Service Worker).
 - Pages-ähnlicher Test: `pwa/` nach `build/site-test` kopieren, `dev/` entfernen, `VERSION` setzen,
   mit `python -m http.server 8010 -d build/site-test` ausliefern (ohne COOP/COEP). Offline-Test:
   den Server stoppen und neu laden.
@@ -411,6 +431,7 @@ steht sie im Server-Log, auch ein abgelehntes Zertifikat (`TLS handshake failed`
 - Neues Set: `build_carddb.py --details --images --refresh`, Dev-Server starten,
   `http://localhost:8000/dev/build-index.html` → Start (~3 min mit SAMPLE-Entfernung), dann
   `data/cards.db` und `pwa/data/` committen. Neue Schriftzug-Varianten prüfen: `dev/watermark.html`.
+  Danach `dev/mass-eval.html` → *Lesemodell speichern* (Massenscan).
 - **OpenCV.js-Falle:** Das Emscripten-Modul `cv` hat eine eigene `then()`-Methode, die mit sich selbst
   auflöst. `await cv` oder `return cv` aus einer `async`-Funktion ergibt eine Endlosschleife (100 % CPU,
   „Page Unresponsive“, auch im Worker). `openCv()` in `pwa/dev/watermark.js` entfernt `then` vorher.

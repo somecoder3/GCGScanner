@@ -7,6 +7,7 @@ import { cardImage } from "./images.js";
 import { ImageStore } from "./imagepack.js";
 import { createDetector } from "./detector.js";
 import { around, pickCard } from "./rectify.js";
+import { setupMass } from "./mass.js";
 
 const $ = (id) => document.getElementById(id);
 const video = $("video");
@@ -37,6 +38,7 @@ const DETECT_OPTIONS = { warpSide: 640 };
 const LIST_HASH = "#liste";
 const SCAN_HASH = "#scan";
 const SETTINGS_HASH = "#einstellungen";
+const MASS_HASH = "#masse";
 
 let index, embedder, collection, detector = null;
 let stream = null, track = null, generation = 0, cameraOn = false, resumeCamera = false;
@@ -80,6 +82,7 @@ async function boot() {
 
   fillSetList();
   collection = new Collection(index);
+  setupMass({ index, collection, cardImage, toast });
   collection.onChange(() => { renderCount(); if (currentView === LIST_HASH) renderList(); });
   renderCount();
   // The view was shown before loading; now fill it (list) or start the camera (scanner).
@@ -98,6 +101,8 @@ function status(text) {
 
 async function registerServiceWorker() {
   if (!("serviceWorker" in navigator)) return null;
+  // ?nosw: no service worker (testing; e.g. Claude's browser pane, where its requests never arrive).
+  if (new URLSearchParams(location.search).has("nosw")) return null;
   let registration;
   try {
     registration = await navigator.serviceWorker.register("sw.js");
@@ -152,7 +157,7 @@ $("backend").addEventListener("change", (event) => {
 // ---- Views: start page, scanner (#scan), list (#liste), settings (#einstellungen) --------------
 // Every view has its own history entry, so the Android back button goes back one view.
 
-const VIEWS = { "": "home-view", [SCAN_HASH]: "scan-view", [LIST_HASH]: "list-view", [SETTINGS_HASH]: "settings-view" };
+const VIEWS = { "": "home-view", [SCAN_HASH]: "scan-view", [LIST_HASH]: "list-view", [SETTINGS_HASH]: "settings-view", [MASS_HASH]: "mass-view" };
 let currentView = null;
 
 // Opens a view as a new history entry; `from` remembers where it was opened.
@@ -175,7 +180,8 @@ function goBack() {
 $("go-scan").addEventListener("click", () => go(SCAN_HASH));
 $("go-list").addEventListener("click", () => go(LIST_HASH));
 $("go-settings").addEventListener("click", () => go(SETTINGS_HASH));
-for (const id of ["scan-back", "back", "settings-back"]) $(id).addEventListener("click", goBack);
+$("go-mass").addEventListener("click", () => go(MASS_HASH));
+for (const id of ["scan-back", "back", "settings-back", "mass-back"]) $(id).addEventListener("click", goBack);
 $("done").addEventListener("click", () => {
   clearExcluded();
   go(LIST_HASH);
@@ -663,10 +669,11 @@ function renderList() {
 
   let toCheck = 0;
   $("items").replaceChildren(...entries.map((entry) => {
-    const { variant, count, checked } = entry;
+    const { variant, count, checked, unsure } = entry;
     const all = siblingsOf(variant);
     const lookAlikes = all.filter((s) => s.lookAlike).length;
-    const needsCheck = lookAlikes > 0 && !checked;
+    // unsure: from the mass scan, which reads only the number (any of its variants is possible).
+    const needsCheck = (lookAlikes > 0 || (unsure && all.length > 1)) && !checked;
     toCheck += needsCheck;
 
     const row = document.createElement("div");
@@ -683,9 +690,9 @@ function renderList() {
     if (all.length > 1) {
       const pick = document.createElement("button");
       pick.className = "variant-btn" + (needsCheck ? " check" : "");
-      pick.textContent = needsCheck
-        ? `Variante prüfen (${lookAlikes} gleich aussehend)`
-        : `${all.length} Varianten`;
+      pick.textContent = !needsCheck ? `${all.length} Varianten`
+        : unsure ? `Variante prüfen (${all.length} Varianten, Massenscan)`
+        : `Variante prüfen (${lookAlikes} gleich aussehend)`;
       pick.addEventListener("click", () => openVariants(variant));
       info.append(pick);
     }
@@ -702,9 +709,10 @@ function renderList() {
   }));
 
   $("check-hint").hidden = !toCheck;
+  // Variant unclear: near-identical reprints, or cards from the mass scan (number only).
   $("check-hint").textContent = toCheck === 1
-    ? "1 Karte gibt es als fast identischen Nachdruck – bitte die Variante prüfen."
-    : `${toCheck} Karten gibt es als fast identische Nachdrucke – bitte die Varianten prüfen.`;
+    ? "Bei 1 Karte ist die Variante unklar (Nachdruck oder Massenscan) – bitte prüfen."
+    : `Bei ${toCheck} Karten ist die Variante unklar (Nachdrucke oder Massenscan) – bitte prüfen.`;
 }
 
 function openVariants(variant) {

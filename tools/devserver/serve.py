@@ -12,6 +12,7 @@ Serves pwa/ like GitHub Pages does, plus routes for the dev pages in pwa/dev/:
   POST /api/watermark-masks stores the SAMPLE watermark masks from dev/watermark.html
   POST /api/index           stores the index from dev/build-index.html together with the variant list
                             it was built from (pwa/data/variants.json + embeddings.*)
+  POST /api/ocr-model       stores the mass-scan reading model (pwa/data/ocr-model.json, hash in index.json)
   POST /api/eval-result     stores the last dev/eval.html result in build/eval-result.json
   POST /api/images/file?name=<file>   stores one encrypted image pack or the manifest in pwa/images/
   POST /api/images/prune    deletes pack files in pwa/images/ that the posted JSON list does not keep
@@ -179,6 +180,16 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             EVAL_RESULT.parent.mkdir(parents=True, exist_ok=True)
             EVAL_RESULT.write_bytes(body)
             self.reply(204)
+        elif route == "/api/ocr-model":
+            json.loads(body)  # must be valid JSON
+            DATA_DIR.mkdir(exist_ok=True)
+            (DATA_DIR / "ocr-model.json").write_bytes(body)
+            index_path = DATA_DIR / "index.json"
+            meta = json.loads(index_path.read_text(encoding="utf-8"))
+            meta["ocr"] = hashlib.sha256(body).hexdigest()[:16]
+            index_path.write_text(json.dumps(meta, indent=2) + "\n", encoding="utf-8")
+            self.log_message("Stored OCR model (%d bytes)", len(body))
+            self.reply(204)
         elif route == "/api/index":
             self.store_index(body)
         elif route == "/api/watermark-masks":
@@ -231,6 +242,12 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             # "removed": built from reference images without the SAMPLE watermark
             "watermark": self.headers.get("X-Watermark", "kept"),
         }
+        # The mass-scan reading model does not depend on the index: keep its entry.
+        old = DATA_DIR / "index.json"
+        if old.exists():
+            ocr = json.loads(old.read_text(encoding="utf-8")).get("ocr")
+            if ocr:
+                meta["ocr"] = ocr
         (DATA_DIR / "index.json").write_text(json.dumps(meta, indent=2) + "\n", encoding="utf-8")
         self.log_message("Stored index: %d variants x %d dims", count, dim)
         self.reply(204)

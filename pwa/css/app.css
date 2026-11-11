@@ -17,6 +17,30 @@ a.button {
   color: var(--text); background: var(--panel); border: 1px solid #3a424d; border-radius: 8px; padding: 8px 14px;
 }
 button.danger { border-color: var(--bad); color: var(--bad); }
+/* File picker that looks like a button (mass scan photo). */
+label.button {
+  display: inline-block; text-align: center; cursor: pointer;
+  color: var(--text); background: var(--panel); border: 1px solid #3a424d; border-radius: 8px; padding: 10px 14px;
+}
+label.button.primary { background: var(--accent); color: #000; border-color: var(--accent); }
+
+/* ---- Mass scan ------------------------------------------------------------------------------ */
+
+.mass-actions label { flex: 1; }
+.mass-photo { margin: 8px 0; border-radius: 6px; overflow: hidden; }
+.mass-canvas { position: relative; width: 100%; }
+.mass-canvas img { display: block; width: 100%; height: auto; }
+.mass-canvas svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+/* Enlarged: three times as wide, scrollable, with the card numbers as labels. */
+.mass-photo.zoomed { overflow: auto; max-height: 70dvh; }
+.mass-photo.zoomed .mass-canvas { width: 300%; }
+.mass-photo:not(.zoomed) text { display: none; }
+.mass-photo polygon { fill: rgba(102, 187, 106, 0.18); stroke: var(--ok); cursor: pointer; }
+.mass-photo text { fill: var(--ok); font-weight: bold; paint-order: stroke; stroke: #000; stroke-width: 0.15em; pointer-events: none; }
+.mass-photo .off polygon { fill: rgba(239, 83, 80, 0.15); stroke: var(--bad); stroke-dasharray: 8 6; }
+.mass-photo .off text { fill: var(--bad); text-decoration: line-through; }
+.item.off { opacity: 0.45; }
+.mass-count { flex: none; min-width: 32px; text-align: right; }
 
 /* ---- Scanner -------------------------------------------------------------------------------- */
 

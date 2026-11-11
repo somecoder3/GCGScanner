@@ -303,6 +303,21 @@ function modelsOf(samples, shrink) {
   return { chars, lda, counts, samples: samples.length };
 }
 
+// The reading model as stored in data/ocr-model.json: only what reading needs (the LDA), rounded.
+export function exportModel(templates) {
+  const round = (x) => Math.round(x * 1e4) / 1e4;
+  const lda = {};
+  for (const [ch, { w, b }] of Object.entries(templates.lda)) lda[ch] = { w: Array.from(w, round), b: round(b) };
+  return { format: "gcg-ocr-lda-1", glyph: [GW, GH], text: TEXT, crop: CROP.width, samples: templates.samples, lda };
+}
+
+export function importModel(json) {
+  if (json.format !== "gcg-ocr-lda-1" || json.glyph[0] !== GW || json.glyph[1] !== GH) throw new Error("Lesemodell passt nicht zu dieser Version");
+  const lda = {}, chars = {};
+  for (const [ch, { w, b }] of Object.entries(json.lda)) { lda[ch] = { w: Float32Array.from(w), b }; chars[ch] = lda[ch].w; }
+  return { lda, chars };
+}
+
 // ---- reading -------------------------------------------------------------------------------------
 
 // Vocabulary for decode(): card numbers grouped by key length.

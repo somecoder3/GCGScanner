@@ -12,6 +12,10 @@ Falsch erkannt? Das ✕ neben dem Treffer schließt die Karte aus, bis eine Kart
 Beim Booster-Öffnen oben rechts (▾) das Set wählen, dann vergleicht die App nur mit dessen Karten.
 Unter *Einstellungen* lassen sich die Scanner-Zeiten anpassen (Anzeigedauer, Tippsperre, Glättung).
 
+*Massenscan*: Karten in Spalten übereinanderlegen, sodass oben rechts bei jeder Karte die Nummer sichtbar
+bleibt, Foto aufnehmen. Die App liest die Nummern (grüne Rahmen; Antippen schließt eine Karte aus) und
+übernimmt sie in die Liste. Die Variante muss dort noch geprüft werden („Variante prüfen“).
+
 ## Aufbau
 
 | Pfad | Inhalt |

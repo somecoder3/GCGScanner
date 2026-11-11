@@ -6,14 +6,16 @@ export class Collection {
   // index: the reference index (for looking up variants by ExBurst id)
   constructor(index) {
     this.index = index;
-    this.entries = new Map(); // ExBurst id -> { variant, count, checked }, in scan order
+    // ExBurst id -> { variant, count, checked, unsure }, in scan order. unsure: added by the mass scan,
+    // which reads only the card number, so the variant still has to be picked.
+    this.entries = new Map();
     this.listeners = new Set();
     let saved = [];
     try { saved = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "[]"); } catch {}
-    for (const { id, count, checked } of saved) {
+    for (const { id, count, checked, unsure } of saved) {
       const row = index.byId.get(id);
       // Ids that are gone after a database update are dropped instead of exporting unknown cards.
-      if (row !== undefined && count > 0) this.entries.set(id, { variant: index.variants[row], count, checked: !!checked });
+      if (row !== undefined && count > 0) this.entries.set(id, { variant: index.variants[row], count, checked: !!checked, unsure: !!unsure });
     }
   }
 
@@ -23,8 +25,9 @@ export class Collection {
     return total;
   }
 
-  add(variant, delta = 1) {
-    const entry = this.entries.get(variant.id) ?? { variant, count: 0, checked: false };
+  add(variant, delta = 1, { unsure = false } = {}) {
+    const entry = this.entries.get(variant.id) ?? { variant, count: 0, checked: false, unsure: false };
+    if (unsure) entry.unsure = true;
     entry.count += delta;
     if (entry.count <= 0) this.entries.delete(variant.id);
     else this.entries.set(variant.id, entry);
@@ -48,7 +51,7 @@ export class Collection {
       } else {
         // Rebuild the map so the swapped entry keeps its place in scan order.
         this.entries = new Map([...this.entries].map(([id, entry]) =>
-          id === fromId ? [variant.id, { variant, count: entry.count, checked: true }] : [id, entry]));
+          id === fromId ? [variant.id, { variant, count: entry.count, checked: true, unsure: false }] : [id, entry]));
       }
     }
     this.changed();
@@ -72,7 +75,7 @@ export class Collection {
   }
 
   changed() {
-    const saved = [...this.entries.values()].map(({ variant, count, checked }) => ({ id: variant.id, count, checked }));
+    const saved = [...this.entries.values()].map(({ variant, count, checked, unsure }) => ({ id: variant.id, count, checked, unsure }));
     try { localStorage.setItem(STORAGE_KEY, JSON.stringify(saved)); } catch {}
     for (const listener of this.listeners) listener();
   }

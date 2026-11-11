@@ -33,6 +33,10 @@ const SHELL = [
   "js/images.js",
   "js/matcher.js",
   "js/rectify.js",
+  "js/mass.js",
+  "js/mass-worker.js",
+  "js/mass-read.js",
+  "js/mass-ocr.js",
   "icons/icon-192.png",
   "icons/icon-512.png",
 ];

@@ -22,7 +22,7 @@
   <h1>Massenscan messen</h1>
   <p class="muted">Simulierte Handyfotos: Karten in Spalten, jede verdeckt die vorige bis auf den oberen Streifen
     (Untergrund, Hüllen, Drehung, Schräglage, Licht, Unschärfe, Rauschen, JPEG). Gemessen wird das Verfahren aus
-    <code>dev/mass-read.js</code>: Wie viele Nummernecken findet es, wie viele liest es richtig? Echte Fotos liegen in
+    <code>js/mass-read.js</code>: Wie viele Nummernecken findet es, wie viele liest es richtig? Echte Fotos liegen in
     <code>build/mass-photos/</code> (je Foto eine <code>.txt</code> mit den Karten darauf). Gelb: Ecke laut
     Vorgabe, Cyan: gefunden (noch nicht gelesen), Grün: richtig gelesen, Rot: falsch gelesen, Magenta: Fehlfund.</p>
   <div class="row controls">
@@ -35,9 +35,10 @@
     <label>Hüllen <select id="sleeves"><option value="">zufällig</option><option value="1">ja</option><option value="0">nein</option></select></label>
     <label><input id="clean" type="checkbox" checked> SAMPLE entfernen</label>
     <label>Seed <input id="seed" type="number" value="1" style="width:70px"></label>
-    <label>Optionen <input id="options" value="{}" style="width:260px" title="JSON, überschreibt DEFAULTS in dev/mass-read.js"></label>
+    <label>Optionen <input id="options" value="{}" style="width:260px" title="JSON, überschreibt DEFAULTS in js/mass-read.js und OCR_DEFAULTS in js/mass-ocr.js"></label>
     <button id="start" class="primary">Szenen messen</button>
     <button id="photos">Echte Fotos messen</button>
+    <button id="save-model" title="Speichert die Zeichenmodelle für die App als pwa/data/ocr-model.json">Lesemodell speichern</button>
   </div>
   <div class="panel"><pre id="status">Lade OpenCV …</pre></div>
   <h2>Nummernecken in Originalgröße (links) und 3× vergrößert</h2>
@@ -49,8 +50,8 @@
   <script type="module">
     import { mulberry32, makeMassScene } from "./mass-scenes.js";
     import { createCleaner, openCv } from "./watermark.js";
-    import { readCorners, METHOD } from "./mass-read.js";
-    import { buildTemplates, vocabulary } from "./mass-ocr.js";
+    import { readCorners, METHOD } from "../js/mass-read.js";
+    import { buildTemplates, vocabulary, exportModel } from "../js/mass-ocr.js";
     import { loadImage } from "../js/embedder.js";
 
     const $ = (id) => document.getElementById(id);
@@ -295,6 +296,12 @@ ${templateInfo}`;
         status.dataset.done = "error";
       }
       event.target.disabled = false;
+    });
+
+    // The reading model for the app (data/ocr-model.json); rebuild after a new set.
+    $("save-model").addEventListener("click", async () => {
+      const response = await fetch("/api/ocr-model", { method: "POST", body: JSON.stringify(exportModel(context.templates)) });
+      status.textContent = response.ok ? "Lesemodell gespeichert: pwa/data/ocr-model.json (Hash in index.json)." : `Speichern fehlgeschlagen: ${response.status}`;
     });
 
     // ---- real photos ------------------------------------------------------------------------------

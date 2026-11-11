@@ -22,7 +22,7 @@
     <p id="home-status" class="muted small">Lade Erkennung …</p>
     <nav class="home-menu">
       <button id="go-scan" class="primary">Einzelkarten scannen<small>Eine Karte nach der anderen in den Rahmen halten</small></button>
-      <button id="go-mass" disabled>Massenscan<small>Kommt noch: viele Karten auf einem Foto</small></button>
+      <button id="go-mass">Massenscan<small>Viele Karten auf einem Foto (Nummern oben rechts sichtbar)</small></button>
       <button id="go-list">Erkannte Karten (<span id="home-count">0</span>)<small>Varianten prüfen, CSV für ExBurst</small></button>
       <button id="go-settings">Einstellungen<small>Scanner-Zeiten, Erkennung, Speicher</small></button>
     </nav>
@@ -60,6 +60,30 @@
         </div>
       </div>
     </div>
+  </main>
+
+  <!-- Mass scan: one photo, the card numbers in the top right corners are read. -->
+  <main id="mass-view" class="view" hidden>
+    <header class="bar">
+      <button id="mass-back" class="icon" aria-label="Zurück">‹</button>
+      <h1>Massenscan</h1>
+    </header>
+    <p class="muted small">Karten in Spalten übereinanderlegen, sodass oben rechts bei jeder Karte die Nummer
+      sichtbar bleibt. Gut ausleuchten, Handy gerade darüber halten, dann ein Foto machen.</p>
+    <div class="row mass-actions">
+      <label class="button primary">Foto aufnehmen<input id="mass-camera" type="file" accept="image/*" capture="environment" hidden></label>
+      <label class="button">Foto wählen<input id="mass-file" type="file" accept="image/*" hidden></label>
+    </div>
+    <p id="mass-status" class="muted small"></p>
+    <div id="mass-photo" class="mass-photo" hidden>
+      <div class="mass-canvas">
+        <img id="mass-img" alt="Aufgenommenes Foto">
+        <svg id="mass-overlay" preserveAspectRatio="none"></svg>
+      </div>
+    </div>
+    <button id="mass-zoom" class="wide" hidden>Foto vergrößern</button>
+    <div id="mass-items" class="items"></div>
+    <button id="mass-take" class="primary wide" hidden>In die Liste übernehmen</button>
   </main>
 
   <!-- Overview after scanning: check variants, adjust counts, export. -->
