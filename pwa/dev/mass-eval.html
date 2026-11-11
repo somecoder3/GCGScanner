@@ -50,6 +50,7 @@
     import { mulberry32, makeMassScene } from "./mass-scenes.js";
     import { createCleaner, openCv } from "./watermark.js";
     import { readCorners, METHOD } from "./mass-read.js";
+    import { buildTemplates, vocabulary } from "./mass-ocr.js";
     import { loadImage } from "../js/embedder.js";
 
     const $ = (id) => document.getElementById(id);
@@ -59,12 +60,21 @@
     const cv = await openCv();
     const variants = await fetch("/api/variants").then((r) => r.json());
     const cardNumbers = new Set(variants.map((v) => v.cardNo));
-    const context = { cv, cardNumbers, variants, options: {} };
+    const context = { cv, cardNumbers, variants, options: {}, vocab: vocabulary(cardNumbers) };
+    window.massContext = context; // for experiments in the console
+    // Character templates from the reference images (once per page load, a few seconds).
+    status.textContent = "Baue Zeichenvorlagen …";
+    context.templates = await buildTemplates(cv, variants, (v) => loadImage(`/ref-images/${v.file}`), {
+      onProgress: (n) => (status.textContent = `Baue Zeichenvorlagen … ${n}`),
+    });
+    const templateInfo = `Vorlagen aus ${context.templates.used} Referenzbildern (${context.templates.skipped} übersprungen): ` +
+      Object.entries(context.templates.counts).sort().map(([ch, n]) => `${ch}×${n}`).join(" ");
     // Options for the reader from the page (JSON), read at every start.
     function readOptions() {
       try { context.options = JSON.parse($("options").value || "{}"); } catch { throw new Error("Optionen sind kein gültiges JSON"); }
     }
-    status.textContent = `Bereit. Verfahren: ${METHOD}`;
+    status.textContent = `Bereit. Verfahren: ${METHOD}
+${templateInfo}`;
 
     // Card images, the SAMPLE watermark removed at full size (the number must stay sharp).
     // A small cache: scenes reuse cards, and cleaning costs some 100 ms per card.

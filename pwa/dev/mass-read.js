@@ -10,7 +10,9 @@
 // characters, so unlike a morphological closing they never get glued to a row. Finally, all numbers in
 // one photo have about the same height, so rows far from the median height are dropped.
 
-export const METHOD = "Ecken finden: Top-/Black-Hat + Textzeilen (Schritt 2, liest noch nicht)";
+import { readRow, OCR_DEFAULTS } from "./mass-ocr.js";
+
+export const METHOD = "Top-/Black-Hat + Textzeilen, Lesen mit Zeichenvorlagen (Schritt 3)";
 
 export const DEFAULTS = {
   workSide: 2000, // the photo is scaled to this long side first (the number is then ~10–17 px high)
@@ -34,12 +36,34 @@ export const DEFAULTS = {
   heightBand: [0.5, 2], // allowed row height relative to the median of all rows; null = off
 };
 
-// bitmap: the photo. context: { cv, cardNumbers, options }.
-// Returns [{ quad: [[x, y] × 4] in photo pixels (top left, top right, bottom right, bottom left),
-// text, cardNo, height, glyphs, polarity }].
+// bitmap: the photo. context: { cv, options, templates, vocab } (templates/vocab from mass-ocr.js;
+// without them nothing is read). Returns [{ quad: [[x, y] × 4] in photo pixels (top left, top right,
+// bottom right, bottom left), text, cardNo, cost, margin, height, glyphs, polarity }].
+// Rows that cannot be read as a card number are dropped unless options.keepUnread is set.
 export async function readCorners(bitmap, context) {
-  return findCorners(bitmap, context.cv, context.options).map((corner) => ({ ...corner, text: "", cardNo: null }));
+  const { cv, templates, vocab } = context;
+  const options = context.options ?? {};
+  const rows = findCorners(bitmap, cv, options);
+  if (!templates) return rows.map((row) => ({ ...row, text: "", cardNo: null }));
+  const read = rows.map((row) => ({ ...row, text: "", cardNo: null, ...readRow(cv, bitmap, row, templates, vocab, options) }));
+  const accepted = read.filter((r) => r.cardNo);
+  // One read per tab: the best one.
+  accepted.sort((a, b) => a.cost - b.cost);
+  const kept = [];
+  const centre = (q) => [q.reduce((s, p) => s + p[0], 0) / 4, q.reduce((s, p) => s + p[1], 0) / 4];
+  for (const r of accepted) {
+    const [x, y] = centre(r.quad);
+    // Another read at the same place (same tab at another threshold level, or a worse reading of it).
+    const twin = kept.some((k) => {
+      const [kx, ky] = centre(k.quad);
+      return Math.abs(kx - x) < k.height * 3 && Math.abs(ky - y) < k.height * 0.8;
+    });
+    if (!twin) kept.push(r);
+  }
+  return options.keepUnread ? kept.concat(read.filter((r) => !r.cardNo)) : kept;
 }
+
+export { OCR_DEFAULTS };
 
 export function findCorners(bitmap, cv, options = {}) {
   const o = { ...DEFAULTS, ...options };

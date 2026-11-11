@@ -174,7 +174,7 @@ Kante), aneinanderliegende Karten verschmelzen, ein 3×3-Block hat sogar das Kar
 Vorgeschlagen (Nutzer entscheidet noch): kleines Segmentierungsnetz auf synthetischen Szenen
 trainieren (PC hat eine RTX 5060), alternativ Regel „mit ~1 cm Abstand auf ruhigen Untergrund“.
 
-## Massenscan: Nummernecke lesen (Stand 11. Nov.: Schritt 2 von 5)
+## Massenscan: Nummernecke lesen (Stand 11. Nov.: Schritt 3 von 5)
 
 Nutzerwunsch: Foto (später live) von Karten, die so übereinanderliegen, dass nur der obere Streifen
 sichtbar ist; die Ecke rechts oben enthält optional `LK`/`SP`, Kartennummer, Rarität (`C`, `U`, `R`, `LR`,
@@ -223,6 +223,39 @@ Schließen statt Verketten (klebt die Zeile an helle Kartenkanten, echtes Foto 2
 niedrigere feste Schwelle ohne Otsu (Rauschen verschmilzt), ≥ 3 Teile pro Zeile (weniger Fehlfunde,
 aber auf echten Fotos verschmelzen Raritätskasten und Sechseck oft mit der Nummer). Die Kästchen
 umfassen manchmal nicht die ganze Nummer (z. B. ohne „T-“); das Lesen schaut daher etwas breiter.
+
+**Schritt 3 (fertig): Nummer lesen** (`pwa/dev/mass-ocr.js`, über `readCorners()` in `mass-read.js`).
+- Zeichenmodelle aus den Referenzbildern: Ecke `[380, 0, 220, 46]` (Schrift ~14 px) von Karten mit dunklem
+  Reiter, in Zeichen zerlegt (Anzahl muss zur bekannten Nummer passen; ~260 von 400 Bildern), jedes Zeichen
+  mit drei Unschärfen und drei Verschiebungen → ~16 000 Beispiele. Daraus **LDA** (gemeinsame Kovarianz mit
+  20 % Schrumpfung, Cholesky) und zum Vergleich mittlere Vorlagen. Baut die Messseite beim Laden (~8 s);
+  für die App später als Datei ablegen.
+- Lesen einer Zeile: Streifen aus dem **Originalfoto** (links 3×, rechts 1,6× Zeilenhöhe Rand, Schrift auf
+  26 px), Neigung aus den Zeichen-Unterkanten nachgeführt; vier Versuche (beide Helligkeiten, 0°/180°) ×
+  zwei Schwellen (Otsu, adaptiv) × bis zu drei Textzeilen im Streifen. Zerlegen: Teile in Schrifthöhe,
+  zusammenklebende nach Zeichenbreite (0,62 × Höhe) teilen; Zeichenausschnitt 0,6 × Höhe breit, nicht
+  gestreckt (sonst wird „1“ zu „T“). Je Zeichen LDA-Werte × 0,15 → Softmax → Kosten −log p.
+- Abgleich: Edit-Distanz gegen alle 1290 Nummern (ohne Bindestrich), Nummer darf mitten in der gelesenen
+  Folge stehen (bis 4 Zeichen davor, 6 dahinter frei; muss ≥ 38 % der Folge sein). Angenommen bei
+  mittleren Kosten ≤ 0,3 und Abstand zur Zweitbesten ≥ 0,1; kurze Nummern (≤ 5 Zeichen: T-, R-, RP-)
+  ≤ 0,15, weil sie sonst in Bildresten auftauchen. Pro Kartenposition nur die beste Lesung.
+- **Ergebnis echte Fotos: 265/436 richtig (61 %), 4 falsch**, ~1 s pro Foto am PC. Sechs Fotos 90–100 %,
+  schwach drei Hochkant-Fotos vom 29. Okt. (5–8/23) und `20261101_204019` (23/48). Die Schwellen halten
+  auf beiden Foto-Hälften (gerade/ungerade getrennt geprüft). Simulation: 54 % richtig, 3 % falsch
+  (enthält viel mehr Silber/Gold als Booster). Beim Prüfen fielen zwei Lücken in Claudes Listen auf
+  (GD06-034 in `20261030_192439`, GD02-122 in `20261101_155300`, je unterste Karte einer Spalte) →
+  nachgetragen; die Listen sind also nicht fehlerfrei.
+- Ausprobiert: mittlere Vorlagen + Korrelation (Obergrenze ~260, viel Verwechslung D/0, 1/T, 5/S, 6/G),
+  getrennte Softmax für Buchstaben/Ziffern (mehr Fehllesungen), Weichzeichnen der Vorlagen (egal),
+  schmalere Zeichenausschnitte (schlechter), an Kästchen abschneiden (verklebte Ziffern sehen wie
+  gefüllte Kästchen aus → schlechter), **Nachlernen** aus sicher gelesenen Fotozeilen (LDA neu, Fotozeichen
+  40-fach gewichtet; getrennt nach Foto-Hälften: 281 statt 265 richtig, aber 9 statt 4 falsch; nicht
+  übernommen, `retrain()`/`photoSamples()` sind da).
+- Schwachstellen: Auf den Hochkant-Fotos sind die Ziffern schmaler/dünner als in den Referenzen und werden
+  fast alle als „0/8/D“ gelesen (Bereichsunterschied Referenz ↔ Foto); ~10 % der Reiter findet Schritt 2
+  nicht; Silber-/Gold-Reiter haben keine eigenen Zeichenbeispiele. Wahrscheinlich größter Hebel: kleine
+  neuronale Netze (Finden + Lesen) auf echten und simulierten Ausschnitten trainieren (PyTorch, RTX 5060;
+  neue Abhängigkeit, mit dem Nutzer abstimmen).
 
 
 - **Service Worker** (`pwa/sw.js`): Caches `gcg-shell-<VERSION>` (HTML/CSS/JS, vorab geladen),
