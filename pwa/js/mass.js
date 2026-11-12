@@ -7,12 +7,69 @@
 const $ = (id) => document.getElementById(id);
 const SVG = "http://www.w3.org/2000/svg";
 const LENS_KEY = "gcg-scanner-lens"; // the lens chosen in the single-card scanner (app.js)
+const SORT_KEY = "gcg-scanner-mass-sort";
+const SORTS = ["az", "za", "columns-rl", "columns-lr"];
+
+// Where a read row lies: centre, text height and reading direction (unit vector along the text; the
+// quad runs along the picture, flip: the card lies upside down).
+function placeOf(quad, flip) {
+  const pos = [quad.reduce((s, p) => s + p[0], 0) / 4, quad.reduce((s, p) => s + p[1], 0) / 4];
+  const h = Math.hypot(quad[3][0] - quad[0][0], quad[3][1] - quad[0][1]);
+  const dx = quad[1][0] - quad[0][0], dy = quad[1][1] - quad[0][1], n = (Math.hypot(dx, dy) || 1) * (flip ? -1 : 1);
+  return { pos, h, u: [dx / n, dy / n] };
+}
+
+// Cards into columns as they lie on the table: [[card, …] per column], each column top to bottom,
+// the columns left to right (or right to left). "Top" and "left" as seen on the cards (the photo may
+// be turned): axes from the mean reading direction. Cards without a place come last, alphabetically.
+// Live cards of different epochs (camera motion lost in between) have no common axes: one after the
+// other.
+export function columnsOf(cards, rightToLeft = false) {
+  const out = [];
+  const epochs = new Map();
+  for (const card of cards) {
+    if (!card.place) continue;
+    const key = card.place.epoch ?? 0;
+    if (!epochs.has(key)) epochs.set(key, []);
+    epochs.get(key).push(card);
+  }
+  for (const key of [...epochs.keys()].sort((a, b) => a - b)) {
+    const members = epochs.get(key);
+    let ux = 0, uy = 0;
+    for (const c of members) { ux += c.place.u[0]; uy += c.place.u[1]; }
+    const n = Math.hypot(ux, uy) || 1;
+    const u = [ux / n, uy / n], down = [-u[1], u[0]]; // across the cards (to the right), along them (down)
+    const items = members.map((card) => ({
+      card,
+      s: card.place.pos[0] * u[0] + card.place.pos[1] * u[1],
+      t: card.place.pos[0] * down[0] + card.place.pos[1] * down[1],
+    })).sort((a, b) => a.s - b.s);
+    // A new column where the next number lies far to the side (columns lie about a card width apart,
+    // ~40 text heights; the cards of one column are a little out of line, and a column may lean).
+    const h = members.map((c) => c.place.h).sort((a, b) => a - b)[Math.floor(members.length / 2)];
+    const columns = [];
+    let last = -Infinity;
+    for (const item of items) {
+      if (item.s - last > 10 * h) columns.push([]);
+      columns.at(-1).push(item);
+      last = item.s;
+    }
+    if (rightToLeft) columns.reverse();
+    for (const column of columns) out.push(column.sort((a, b) => a.t - b.t).map((item) => item.card));
+  }
+  const rest = cards.filter((card) => !card.place).sort((a, b) => a.cardNo.localeCompare(b.cardNo));
+  if (rest.length) out.push(rest);
+  return out;
+}
 
 export function setupMass({ index, collection, cardImage, toast }) {
   let worker = null, ready = null, nextId = 0;
   const pending = new Map();
   let photoUrl = null;
-  let found = []; // [{ quad, cardNo, variant, included }]
+  let found = []; // [{ quad, cardNo, variant, included, place: { pos, h, u, epoch } }]
+  let sort = "az";
+  try { if (SORTS.includes(localStorage.getItem(SORT_KEY))) sort = localStorage.getItem(SORT_KEY); } catch {}
+  $("mass-sort").value = sort;
 
   function call(message, transfer = []) {
     const id = nextId++;
@@ -67,7 +124,7 @@ export function setupMass({ index, collection, cardImage, toast }) {
       photoUrl = URL.createObjectURL(file);
       status.textContent = `Lese ${width} × ${height} Pixel …`;
       const { cards, ms } = await call({ type: "read", photo }, [photo]);
-      found = cards.map((card) => ({ ...card, variant: variantOf(card.cardNo), included: true }))
+      found = cards.map((card) => ({ ...card, variant: variantOf(card.cardNo), included: true, place: placeOf(card.quad, card.flip) }))
         .filter((card) => card.variant);
       status.textContent = found.length
         ? `${found.length} Karten erkannt (${(ms / 1000).toFixed(1)} s). Antippen schließt eine Karte aus. Fehlende Karten bitte einzeln scannen oder ein zweites Foto machen.`
@@ -119,32 +176,56 @@ export function setupMass({ index, collection, cardImage, toast }) {
       }));
     }
 
-    // Cards below the photo, grouped by number.
-    const groups = new Map();
-    for (const card of found) {
-      const group = groups.get(card.cardNo) ?? { variant: card.variant, count: 0, off: 0 };
-      if (card.included) group.count++;
-      else group.off++;
-      groups.set(card.cardNo, group);
-    }
-    $("mass-items").replaceChildren(...[...groups.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([cardNo, group]) => {
+    // Cards below the photo: alphabetically grouped by number, or in columns as they lie on the table
+    // (one row per card; copies lying one after the other in a column as one row).
+    const row = (cardNo, variant, count, off) => {
       const row = document.createElement("div");
-      row.className = "item" + (group.count ? "" : " off");
+      row.className = "item" + (count ? "" : " off");
       const thumb = document.createElement("div");
       thumb.className = "thumb";
-      thumb.append(cardImage(group.variant));
+      thumb.append(cardImage(variant));
       const info = document.createElement("div");
       info.className = "info";
       info.innerHTML = "<b></b><small></small>";
-      info.querySelector("b").textContent = group.variant.name;
+      info.querySelector("b").textContent = variant.name;
       const several = variantCount.get(cardNo) > 1 ? " · Variante später prüfen" : "";
-      info.querySelector("small").textContent = `${cardNo}${several}${group.off ? ` · ${group.off} ausgeschlossen` : ""}`;
+      info.querySelector("small").textContent = `${cardNo}${several}${off ? ` · ${off} ausgeschlossen` : ""}`;
       const qty = document.createElement("b");
       qty.className = "mass-count";
-      qty.textContent = `${group.count}×`;
+      qty.textContent = `${count}×`;
       row.append(thumb, info, qty);
       return row;
-    }));
+    };
+    const rows = [];
+    if (sort.startsWith("columns")) {
+      columnsOf(found, sort === "columns-rl").forEach((column, i) => {
+        const head = document.createElement("div");
+        head.className = "mass-column";
+        head.textContent = `${column[0].place ? `Spalte ${i + 1}` : "Ohne Lage"} · ${column.length} Karte${column.length === 1 ? "" : "n"}`;
+        rows.push(head);
+        for (let j = 0; j < column.length;) {
+          let k = j;
+          while (k < column.length && column[k].cardNo === column[j].cardNo && column[k].included === column[j].included) k++;
+          const { cardNo, variant, included } = column[j];
+          rows.push(included ? row(cardNo, variant, k - j, 0) : row(cardNo, variant, 0, k - j));
+          j = k;
+        }
+      });
+    } else {
+      const groups = new Map();
+      for (const card of found) {
+        const group = groups.get(card.cardNo) ?? { variant: card.variant, count: 0, off: 0 };
+        if (card.included) group.count++;
+        else group.off++;
+        groups.set(card.cardNo, group);
+      }
+      const sign = sort === "za" ? -1 : 1;
+      for (const [cardNo, group] of [...groups.entries()].sort(([a], [b]) => sign * a.localeCompare(b))) {
+        rows.push(row(cardNo, group.variant, group.count, group.off));
+      }
+    }
+    $("mass-items").replaceChildren(...rows);
+    $("mass-tools").hidden = !found.length;
     const total = found.filter((card) => card.included).length;
     $("mass-take").hidden = !found.length;
     $("mass-take").disabled = !total;
@@ -218,9 +299,10 @@ export function setupMass({ index, collection, cardImage, toast }) {
         const reads = live.tracker.add(cards);
         drawLive(reads, width, height);
         const result = live.tracker.result();
-        found = result.cards.flatMap(({ cardNo, count }) => {
+        found = result.cards.flatMap(({ cardNo, count, places }) => {
           const variant = variantOf(cardNo);
-          return variant ? Array.from({ length: count }, () => ({ cardNo, variant, included: true })) : [];
+          // More copies than places (seen together in one frame): the extra ones at the last place.
+          return variant ? Array.from({ length: count }, (_, i) => ({ cardNo, variant, included: true, place: places[Math.min(i, places.length - 1)] })) : [];
         });
         render(null);
         $("mass-take").hidden = true;
@@ -299,6 +381,24 @@ export function setupMass({ index, collection, cardImage, toast }) {
     }
   });
 
+  $("mass-sort").addEventListener("change", () => {
+    sort = $("mass-sort").value;
+    try { localStorage.setItem(SORT_KEY, sort); } catch {}
+    render();
+  });
+  // Empties this list and the photo (not the list of recognised cards). While the live camera runs,
+  // counting starts again.
+  $("mass-clear").addEventListener("click", async () => {
+    if (!found.length || !confirm(`Alle ${found.length} Karten aus dem Massenscan löschen? „Erkannte Karten“ bleibt unverändert.`)) return;
+    if (live) {
+      const { LiveTracker } = await import("./mass-live.js");
+      if (live) live.tracker = new LiveTracker();
+    }
+    found = [];
+    size = null;
+    render(null);
+    $("mass-status").textContent = live ? "Liste geleert, zählt neu." : "Liste geleert.";
+  });
   $("mass-zoom").addEventListener("click", () => {
     $("mass-photo").classList.toggle("zoomed");
     render();

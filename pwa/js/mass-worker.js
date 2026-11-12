@@ -3,7 +3,7 @@
 //
 // Requests:  { id, type: "init", model, cardNumbers }   model = data/ocr-model.json
 //            { id, type: "read", photo: ImageBitmap }     (transferred and closed)
-// Responses: { id, cards: [{ quad, cardNo, cost, text }], ms } or { id, error }
+// Responses: { id, cards: [{ quad, cardNo, cost, text, flip }], ms } (flip: the card lies upside down in the picture) or { id, error }
 
 importScripts("../vendor/opencv-4.12.0/opencv.js");
 
@@ -36,7 +36,7 @@ self.onmessage = async ({ data }) => {
       const t0 = performance.now();
       const corners = await read.readCorners(data.photo, context);
       data.photo.close();
-      const cards = corners.map(({ quad, cardNo, cost, text }) => ({ quad, cardNo, cost, text }));
+      const cards = corners.map(({ quad, cardNo, cost, text, flip }) => ({ quad, cardNo, cost, text, flip: !!flip }));
       self.postMessage({ id, cards, ms: performance.now() - t0 });
     }
   } catch (error) {

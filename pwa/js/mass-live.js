@@ -22,6 +22,9 @@ export const LIVE_DEFAULTS = {
 
 const centreOf = (quad) => [quad.reduce((s, p) => s + p[0], 0) / 4, quad.reduce((s, p) => s + p[1], 0) / 4];
 const heightOf = (quad) => Math.hypot(quad[3][0] - quad[0][0], quad[3][1] - quad[0][1]);
+// Reading direction of a number row (unit vector along the text; the quad runs along the picture,
+// flip: the card lies upside down).
+const dirOf = (quad, flip) => { const dx = quad[1][0] - quad[0][0], dy = quad[1][1] - quad[0][1], n = (Math.hypot(dx, dy) || 1) * (flip ? -1 : 1); return [dx / n, dy / n]; };
 const median = (values) => [...values].sort((a, b) => a - b)[Math.floor(values.length / 2)];
 
 export class LiveTracker {
@@ -38,7 +41,7 @@ export class LiveTracker {
   add(reads) {
     const o = this.o;
     const frame = ++this.frame;
-    const items = reads.filter((r) => r.cardNo).map((r) => ({ read: r, pos: centreOf(r.quad), h: heightOf(r.quad) }));
+    const items = reads.filter((r) => r.cardNo).map((r) => ({ read: r, pos: centreOf(r.quad), h: heightOf(r.quad), u: dirOf(r.quad, r.flip) }));
     // All tracks of the epoch follow the camera, also those out of view: a card coming back into view
     // meets its track again, and copies of one number stay apart.
     let active = this.tracks.filter((t) => t.epoch === this.epoch);
@@ -86,7 +89,7 @@ export class LiveTracker {
         best = stale?.t ?? null;
       }
       if (!best) {
-        best = { id: this.tracks.length, pos: item.pos, h: item.h, votes: new Map(), lastFrame: frame, epoch: this.epoch };
+        best = { id: this.tracks.length, pos: item.pos, h: item.h, u: item.u, votes: new Map(), lastFrame: frame, epoch: this.epoch };
         this.tracks.push(best);
         active.push(best);
       }
@@ -94,6 +97,7 @@ export class LiveTracker {
       best.votes.set(item.read.cardNo, (best.votes.get(item.read.cardNo) ?? 0) + 1);
       best.pos = item.pos;
       best.h = item.h;
+      best.u = item.u;
       best.lastFrame = frame;
       ids.push(best.id);
       out.push({ ...item.read, track: best.id });
@@ -105,9 +109,10 @@ export class LiveTracker {
     });
   }
 
-  // Cards so far: [{ cardNo, count, votes }] (confirmed tracks only) and the number of unconfirmed tracks.
-  // count: the confirmed tracks of a number at different places, at least as many as were seen at
-  // the same time in one frame.
+  // Cards so far: [{ cardNo, count, votes, places }] (confirmed tracks only) and the number of
+  // unconfirmed tracks. count: the confirmed tracks of a number at different places, at least as many
+  // as were seen at the same time in one frame. places: [{ pos, h, u, epoch }] of the epoch with the
+  // most places of the number (for sorting by columns; positions in the last frame of that epoch).
   result() {
     const confirmed = this.tracks.filter((t) => votesOf(t) >= this.o.minVotes);
     const counts = new Map(), votes = new Map(), places = new Map();
@@ -120,9 +125,11 @@ export class LiveTracker {
       if (!list.some((p) => Math.hypot(p.pos[0] - t.pos[0], p.pos[1] - t.pos[1]) < this.o.sameCard * Math.max(p.h, t.h))) list.push(t);
       places.set(key, list);
     }
+    const where = new Map();
     for (const [key, list] of places) {
       const cardNo = key.split(" ")[0];
       counts.set(cardNo, Math.max(counts.get(cardNo) ?? 0, list.length));
+      if (list.length > (where.get(cardNo)?.length ?? 0)) where.set(cardNo, list.map((t) => ({ pos: t.pos, h: t.h, u: t.u, epoch: t.epoch })));
     }
     for (const ids of this.frames) {
       const inFrame = new Map();
@@ -133,7 +140,7 @@ export class LiveTracker {
       }
       for (const [cardNo, n] of inFrame) counts.set(cardNo, Math.max(counts.get(cardNo) ?? 0, n));
     }
-    const cards = [...counts].map(([cardNo, count]) => ({ cardNo, count, votes: votes.get(cardNo) }));
+    const cards = [...counts].map(([cardNo, count]) => ({ cardNo, count, votes: votes.get(cardNo), places: where.get(cardNo) ?? [] }));
     return { cards, unconfirmed: this.tracks.length - confirmed.length, frames: this.frame };
   }
 }

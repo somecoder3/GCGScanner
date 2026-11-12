@@ -94,6 +94,15 @@
       </div>
     </div>
     <button id="mass-zoom" class="wide" hidden>Foto vergrößern</button>
+    <div id="mass-tools" class="row mass-tools" hidden>
+      <label>Sortierung <select id="mass-sort">
+        <option value="az">A → Z</option>
+        <option value="za">Z → A</option>
+        <option value="columns-rl">Spalten, rechts zuerst</option>
+        <option value="columns-lr">Spalten, links zuerst</option>
+      </select></label>
+      <button id="mass-clear" class="danger">Leeren</button>
+    </div>
     <div id="mass-items" class="items"></div>
     <button id="mass-take" class="primary wide" hidden>In die Liste übernehmen</button>
   </main>

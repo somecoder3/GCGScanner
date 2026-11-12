@@ -328,6 +328,18 @@ Die Ausschnitte der nicht gelesenen Zeilen waren meist gut lesbar; es scheiterte
 - Variante: noch nicht bestimmt (Schritt 4). Übernommen wird die Grundkarte; hat die Nummer mehrere
   Varianten, setzt `Collection.add(..., { unsure: true })` das Kennzeichen `unsure` (gespeichert), und
   die Liste zeigt „Variante prüfen (N Varianten, Massenscan)“, bis eine gewählt ist.
+- **Liste leeren und Sortierung (12. Nov., Nutzerwunsch):** Über der Massenscan-Liste stehen *Sortierung*
+  und *Leeren* (mit Rückfrage; leert nur den Massenscan samt Foto, nicht „Erkannte Karten“; im
+  Live-Modus zählt der Tracker neu). Sortierungen: A → Z, Z → A (gruppiert nach Nummer) und
+  *Spalten, rechts/links zuerst* (eine Zeile pro Karte, gleiche Nummern direkt untereinander als eine
+  Zeile, Überschrift „Spalte N“). Die Wahl steht in `gcg-scanner-mass-sort`. Spalten über `columnsOf()`
+  in `mass.js`: Achsen aus der mittleren Leserichtung der Nummern (der Worker liefert dafür `flip`,
+  Karte liegt im Bild auf dem Kopf), neue Spalte bei mehr als 10 Zeilenhöhen seitlichem Abstand,
+  in der Spalte von oben nach unten. „Oben/links“ gilt also aus Sicht der Karten, nicht des Fotos
+  (geprüft mit Szene 3 × 6 Karten, 0° und 180°). Live: `LiveTracker.result()` liefert je Nummer
+  `places` (Lage der Spuren im letzten Bild ihres Abschnitts); Abschnitte (`epoch`) werden
+  nacheinander sortiert, weil ihre Lagen nicht vergleichbar sind. Ein Foto mit um 90° gedrehten Karten
+  (dieselbe Szene gedreht) las der Massenscan gar nicht; die Nummernzeilen müssen wohl etwa waagerecht liegen.
 - Lesemodell neu bauen (nach neuem Set): `dev/mass-eval.html` → *Lesemodell speichern* (Dev-Server
   `POST /api/ocr-model`; `store_index` behält den `ocr`-Eintrag), dann `pwa/data/` committen.
 
