@@ -336,14 +336,14 @@ Die Ausschnitte der nicht gelesenen Zeilen waren meist gut lesbar; es scheiterte
   in `mass.js`: Achsen aus der mittleren Leserichtung der Nummern (der Worker liefert dafür `flip`,
   Karte liegt im Bild auf dem Kopf), neue Spalte bei mehr als 10 Zeilenhöhen seitlichem Abstand,
   in der Spalte von oben nach unten. „Oben/links“ gilt also aus Sicht der Karten, nicht des Fotos
-  (geprüft mit Szene 3 × 6 Karten, 0° und 180°). Live: `LiveTracker.result()` liefert je Nummer
+  (geprüft mit Szene 3 × 6 Karten, 0° und 180°; am Handy laut Nutzer „genau so wie ich es wollte“). Live: `LiveTracker.result()` liefert je Nummer
   `places` (Lage der Spuren im letzten Bild ihres Abschnitts); Abschnitte (`epoch`) werden
   nacheinander sortiert, weil ihre Lagen nicht vergleichbar sind. Ein Foto mit um 90° gedrehten Karten
   (dieselbe Szene gedreht) las der Massenscan gar nicht; die Nummernzeilen müssen wohl etwa waagerecht liegen.
 - Lesemodell neu bauen (nach neuem Set): `dev/mass-eval.html` → *Lesemodell speichern* (Dev-Server
   `POST /api/ocr-model`; `store_index` behält den `ocr`-Eintrag), dann `pwa/data/` committen.
 
-**Live-Modus (12. Nov., Nutzerwunsch, noch nicht am Handy getestet):** Button *Live scannen* in `#masse`.
+**Live-Modus (12. Nov., Nutzerwunsch; am Handy grob getestet: Erkennungsrate laut Nutzer „sehr zufrieden“, das Merken sicher erkannter Karten klappt „erstaunlich gut“):** Button *Live scannen* in `#masse`.
 Idee des Nutzers: Kamera über die Spalten schwenken, durch die wechselnde Perspektive werden mehr Karten
 lesbar; Fertig beendet. Umsetzung in `pwa/js/mass.js` (`startLive()`/`liveLoop()`, eigene Kamera mit
 4K-Anfrage, Objektiv aus `gcg-scanner-lens`, Dauer-Autofokus) und `pwa/js/mass-live.js` (`LiveTracker`):
@@ -375,7 +375,7 @@ lesbar; Fertig beendet. Umsetzung in `pwa/js/mass.js` (`startLive()`/`liveLoop()
   ist also nur ein grober Anhalt. In der App mit simulierter Kamera (Canvas `captureStream`, siehe
   „Testen im Browser-Fenster“), `204019`, 121 Bilder: 47/48, 2 doppelt gezählt (ohne `stale` 13).
   `195332` (hoch), 81 Bilder: 18/22, 1 falsch.
-- Offen: echter Handytest (liefert Chrome 4K? Zeit pro Bild?), einmal gesehene Karten optional anbieten.
+- Offen: genauer messen (liefert Chrome 4K? Zeit pro Bild?), einmal gesehene Karten optional anbieten.
 
 
 - **Service Worker** (`pwa/sw.js`): Caches `gcg-shell-<VERSION>` (HTML/CSS/JS, vorab geladen),
