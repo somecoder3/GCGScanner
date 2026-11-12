@@ -174,7 +174,7 @@ Kante), aneinanderliegende Karten verschmelzen, ein 3×3-Block hat sogar das Kar
 Vorgeschlagen (Nutzer entscheidet noch): kleines Segmentierungsnetz auf synthetischen Szenen
 trainieren (PC hat eine RTX 5060), alternativ Regel „mit ~1 cm Abstand auf ruhigen Untergrund“.
 
-## Massenscan: Nummernecke lesen (Stand 11. Nov.: Schritte 1–3 und 5 fertig, 4 offen)
+## Massenscan: Nummernecke lesen (Stand 12. Nov.: Schritte 1–3 und 5 fertig, 4 offen; echte Fotos 420/436)
 
 Nutzerwunsch: Foto (später live) von Karten, die so übereinanderliegen, dass nur der obere Streifen
 sichtbar ist; die Ecke rechts oben enthält optional `LK`/`SP`, Kartennummer, Rarität (`C`, `U`, `R`, `LR`,
@@ -251,11 +251,70 @@ umfassen manchmal nicht die ganze Nummer (z. B. ohne „T-“); das Lesen schaut
   gefüllte Kästchen aus → schlechter), **Nachlernen** aus sicher gelesenen Fotozeilen (LDA neu, Fotozeichen
   40-fach gewichtet; getrennt nach Foto-Hälften: 281 statt 265 richtig, aber 9 statt 4 falsch; nicht
   übernommen, `retrain()`/`photoSamples()` sind da).
-- Schwachstellen: Auf den Hochkant-Fotos sind die Ziffern schmaler/dünner als in den Referenzen und werden
-  fast alle als „0/8/D“ gelesen (Bereichsunterschied Referenz ↔ Foto); ~10 % der Reiter findet Schritt 2
-  nicht; Silber-/Gold-Reiter haben keine eigenen Zeichenbeispiele. Wahrscheinlich größter Hebel: kleine
-  neuronale Netze (Finden + Lesen) auf echten und simulierten Ausschnitten trainieren (PyTorch, RTX 5060;
-  neue Abhängigkeit, mit dem Nutzer abstimmen). Nutzer wollte am 11. Nov. erst den Einbau in die App.
+- Schwachstellen (Stand 11. Nov., größtenteils am 12. Nov. behoben, siehe unten): Auf den Hochkant-Fotos
+  wurden die Ziffern fast alle als „0/8/D“ gelesen. Das lag nicht am Zeichenmodell, sondern an der
+  Zerlegung (siehe 12. Nov.).
+
+**Verbesserungen 12. Nov.** (Nutzer am Handy: „zu wenig erkannt“, 0,3 s pro Foto war ok). Echte Fotos
+**265 → 412 von 436 richtig (94,5 %), 4 → 5 falsch**; Simulation 54,1 → 57,7 %, 11 → 14 falsch (357 Karten).
+Am PC ~2 s statt ~1 s pro Foto (in der App 3,6 s für `20261101_204019`, 47 statt 23 Karten).
+Die Ausschnitte der nicht gelesenen Zeilen waren meist gut lesbar; es scheiterte an der Zerlegung.
+1. **Zerlegung an Lücken** (`splitPart()` in `mass-ocr.js`, `SPLIT.mode`, alt: `"pitch"`): Auf Fotos kleben
+   Ziffern und Bindestrich zusammen („06-089“ als ein Teil); gleichmäßiges Teilen setzte die Kästchen
+   zwischen die Zeichen und zählte den Bindestrich mit. Jetzt trennen Spalten ohne Tinte oder mit Tinte nur
+   im mittleren Band (Bindestrich); zu breite Stücke werden am tiefsten Tintental geschnitten. 265 → 290.
+2. **Spalten** (`fillColumns()` in `mass-read.js`, `COLUMN_DEFAULTS`, abschaltbar mit `{"columns":false}`):
+   Keine Kantensuche im Bild, sondern Geometrie aus den sicher gelesenen Nummern (Fehllesungen sind
+   selten): gleiche Richtung und auf einer Linie quer zur Spalte → eine Spalte; daraus Richtung,
+   Ausrichtung (0°/180°), Schrifthöhe und üblicher Kartenabstand. Lücken, die ein Vielfaches des Abstands
+   sind, und bis zu 2 Schritte vor/nach der Spalte werden an der erwarteten Stelle (±0,22 Abstand) neu
+   gelesen. Zwei Durchgänge (`passes`). `readRow()` liefert dafür `offset` (Lage der gelesenen Zeile
+   im Kästchen) und `quad`. Damit 290 → 337, mit 2 Durchgängen 346; lockerere Schwelle an erwarteten
+   Stellen brachte nur Fehler.
+3. **Zweite Schwelle `otsu2`** (Otsu nur über den Pixeln oberhalb der ersten Otsu-Schwelle): Liegt ein
+   heller Bereich (Kartenrand, Tisch) im Streifen, trennt die erste Schwelle nur Reiter von Rest, die
+   Ziffern laufen zu Klumpen. `binarize: ["otsu", "adaptive", "otsu2"]`. 346 → 414, aber 13 falsch.
+4. **Kurze Nummern** (T-, R-, RP-) streng: `shortMaxCost` 0,15 → 0,08 (414/13 → 412/7).
+5. **Dubletten** über die Lage der gelesenen Zeile statt der Kästchenmitte (ein verschobenes Kästchen
+   las die Nummer daneben noch einmal). 7 → 5 falsch.
+6. **Höhenfilter zweistufig** (`readCorners()`): Der Filter „Zeilenhöhe 0,5–2× Median aller Zeilen“
+   warf auf dem Token-Foto (Spielmatte, viele kleine Fehlfunde) alle echten Reiter weg. Jetzt erst die
+   Zeilen im Band lesen, dann die übrigen Zeilen im Band um die Höhe der *gelesenen* Nummern. Ganz ohne
+   Filter: 419 richtig, aber 8 falsch. Zweistufig: **420/436 (96,3 %), 4 falsch**, Token-Foto 1/8 → 7/8.
+- Lesemodell neu gespeichert (die Zerlegung betrifft auch die Referenzbeispiele); App und Messseite
+  liefern damit dasselbe Ergebnis (geprüft mit dem gespeicherten Modell: 420/436).
+- Am PC ~3,3 s pro Foto auf der Messseite, in der App 5,6 s fürs Token-Foto (viele Fehlfunde zu lesen).
+- Übrige Fehler: 089→109, 079→019 (echte Fehllesungen), GD06-003 doppelt, T-010 aus dem Rauschen der
+  Spielmatte. Fehlend (16): GD06-060/070/089 (`194952`), 010/068 (`195332`), 059/079/104 (`195502`),
+  037 (`195620`), T-036, 121 (`192439`), 119 (`192828`), T-030 (`192949`, `204019`), 079 (`204019`),
+  GD05-123 (SP, Silber, `205237`). 9 davon haben eine abgelehnte Lesung mit der richtigen Nummer als
+  bestem Kandidaten (Kosten 0,30–0,50, Abstand zur Zweitbesten oft > 0,3).
+- **Ausprobiert am 12. Nov., nicht übernommen** (Nutzerwunsch: Ansätze ohne neuronales Netz):
+  - *Wortvergleich*: Die ganze Nummer aus dem Referenzbild (Wortbild) per normierter Kreuzkorrelation
+    mit dem Fotoausschnitt vergleichen, für die besten 5 Kandidaten. Trennt nicht: Ähnliche Nummern
+    (GD06-010/-013) liegen fast gleichauf, das gemeinsame „GD06-0“ und die Unschärfe dominieren; selbst
+    bei richtig gelesenen Karten lag in 185 von 400 Fällen eine andere Nummer vorn. Code entfernt.
+  - *Sets des Fotos* (`photoSets: true`, `SET_DEFAULTS`, `redecode()`): Abgelehnte falsche Lesungen kommen
+    fast immer aus Sets, die nicht auf dem Foto liegen. Nicht gelesene Zeilen gegen die Sets der gelesenen
+    Karten neu abgleichen (`readRow()` hebt dafür alle Zeichenkosten in `lines` auf). Bei gleicher
+    Schwelle +0; mit lockererer Schwelle (`setRead: {maxCost: 0.5, minMargin: 0.2}`) 423 richtig, aber
+    6 falsch (eine lockere Lesung besetzt den Platz, den die Spalten richtig gefüllt hätten). Als
+    Option drin, aus.
+  - *Dünnere/dickere Striche* in den Trainingsbeispielen (`buildTemplates(..., { strokes: [-1, 0, 1] })`,
+    Grau-Erosion/-Dilatation 2×2; auch mit 800 Referenzen): 419, Fehler verschieben sich zwischen Fotos.
+    Option drin, Standard `[0]`.
+  - *Beide Modelle kombiniert* (Standard + Strichvarianten, Treffer an freien Stellen dazu): 425 richtig,
+    6 falsch, doppelte Rechenzeit. Nicht übernommen.
+  - Folgerung: Die verbleibenden Fehler liegen in der Zeichenerkennung (LDA auf Referenzzeichen). Ohne
+    trainiertes Netz bleiben realistisch: eigene Foto-Zeichen ins Lesemodell (Nachlernen, mit
+    Kreuzprüfung über Foto-Hälften; am 11. Nov. mehr Fehler), oder in der App bei knappen Lesungen
+    nachfragen („GD06-060?“) statt sie zu verwerfen.
+- Konsolen-Hilfen für Versuche mit den echten Fotos: `pwa/dev/mass-experiments.js` (Aufruf im Kopf;
+  `run()` mit Lese- und Vorlagen-Optionen, `wait()`, `showWrong()`).
+  Im ausgeblendeten Browser-Fenster friert die Seite zwischen zwei Abfragen ein; beim Warten die Seite
+  per `await`-Schleife mit `setTimeout` beschäftigt halten.
+- Nächste Ideen: knappe Lesungen in der App zur Bestätigung anzeigen, Schritt 4 (Variante),
+  bei Bedarf kleine neuronale Netze (PyTorch, neue Abhängigkeit, mit dem Nutzer abstimmen).
 
 **Schritt 5 (fertig, 11. Nov.): in der App** (`#masse`, `pwa/js/mass.js`, Worker `pwa/js/mass-worker.js`).
 - Foto über `<input type="file" capture="environment">` (native Kamera, volle Auflösung) oder aus der
@@ -271,6 +330,40 @@ umfassen manchmal nicht die ganze Nummer (z. B. ohne „T-“); das Lesen schaut
   die Liste zeigt „Variante prüfen (N Varianten, Massenscan)“, bis eine gewählt ist.
 - Lesemodell neu bauen (nach neuem Set): `dev/mass-eval.html` → *Lesemodell speichern* (Dev-Server
   `POST /api/ocr-model`; `store_index` behält den `ocr`-Eintrag), dann `pwa/data/` committen.
+
+**Live-Modus (12. Nov., Nutzerwunsch, noch nicht am Handy getestet):** Button *Live scannen* in `#masse`.
+Idee des Nutzers: Kamera über die Spalten schwenken, durch die wechselnde Perspektive werden mehr Karten
+lesbar; Fertig beendet. Umsetzung in `pwa/js/mass.js` (`startLive()`/`liveLoop()`, eigene Kamera mit
+4K-Anfrage, Objektiv aus `gcg-scanner-lens`, Dauer-Autofokus) und `pwa/js/mass-live.js` (`LiveTracker`):
+- Jedes Kamerabild geht ganz durch `readCorners()` (das nächste, sobald der Worker frei ist).
+- Jede gelesene Nummer ist eine **Spur**. Kamerabewegung zwischen zwei Bildern aus Paaren gleicher
+  Nummern (jede Lesung mit jeder Spur ihrer Nummer, damit auch doppelte Karten passen), robust per
+  RANSAC (je zwei Paare → Ähnlichkeitstransformation, die mit den meisten Paaren innerhalb 1 Zeilenhöhe
+  gewinnt, dann kleinste Quadrate). Alle Spuren werden mitbewegt, auch außerhalb des Bildes.
+- Zuordnung: nächste Spur innerhalb 1,6 Zeilenhöhen; sonst eine **veraltete Spur gleicher Nummer**
+  (seit > 2 Bildern nicht gesehen, `stale`; gegen Drift); sonst neue Spur. Jede Lesung ist eine Stimme;
+  Nummer der Spur = Mehrheit (einmalige Fehllesung zählt nicht), **bestätigt ab 2 Stimmen** (`minVotes`).
+- Findet ein Bild keine bekannte Nummer wieder, ist die Kamerabewegung unbekannt → neuer Abschnitt
+  (`epoch`), alte Spuren werden nicht mehr zugeordnet.
+- Anzahl je Nummer: bestätigte Spuren an verschiedenen Stellen (innerhalb eines Abschnitts), mindestens
+  so viele wie in einem Bild gleichzeitig gelesen. Durch `stale` zählt ein zweites Exemplar nur, wenn es
+  zeitnah zum ersten gesehen wurde.
+- Anzeige: Rahmen der Lesungen im aktuellen Bild (grün bestätigt, orange einmal gesehen), darunter die
+  Liste der bestätigten Karten, *Fertig* → Liste wie beim Foto übernehmen, *Abbrechen*. Kamera stoppt
+  beim Verlassen der Ansicht und im Hintergrund.
+- **Geschwindigkeit:** Videobilder (und Canvas-Bitmaps) liegen auf der GPU; jedes `drawImage` +
+  `getImageData` pro Leseausschnitt wartete auf die GPU (4K-Bild 10 s!). Seit 12. Nov. holt
+  `readCorners()` das Bild einmal als Graustufen-Matrix (`grayImage()` in `mass-ocr.js`), `warpStrip()`
+  schneidet daraus. 4K-Bild 0,9 s statt 10 s am PC, auch Fotos etwas schneller (2,5 statt 2,9 s).
+- Gemessen ohne Kamera: `evaluateLive()` in `dev/mass-experiments.js` (Ausschnitte 65 % der langen
+  Seite in 4K, Zickzack-Schwenk hin und zurück, Drehung ±0,05 rad, Abstand ±12 %). 20 Bilder pro Foto:
+  **372/436 richtig, 4 falsch** (Einzelfoto 420/4). Besser als das Foto: `204019` 47/48, `195502` 23/23,
+  `195620` 23/23 (Foto 46, 20, 22); schlechter die Hochkant-Fotos vom 29. Okt. und das Token-Foto (0/8;
+  Tokens auf der Spielmatte bekommen keine zweite Stimme). Die Simulation deckt die Karten ungleich ab,
+  ist also nur ein grober Anhalt. In der App mit simulierter Kamera (Canvas `captureStream`, siehe
+  „Testen im Browser-Fenster“), `204019`, 121 Bilder: 47/48, 2 doppelt gezählt (ohne `stale` 13).
+  `195332` (hoch), 81 Bilder: 18/22, 1 falsch.
+- Offen: echter Handytest (liefert Chrome 4K? Zeit pro Bild?), einmal gesehene Karten optional anbieten.
 
 
 - **Service Worker** (`pwa/sw.js`): Caches `gcg-shell-<VERSION>` (HTML/CSS/JS, vorab geladen),

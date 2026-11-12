@@ -37,6 +37,7 @@ const SHELL = [
   "js/mass-worker.js",
   "js/mass-read.js",
   "js/mass-ocr.js",
+  "js/mass-live.js",
   "icons/icon-192.png",
   "icons/icon-512.png",
 ];

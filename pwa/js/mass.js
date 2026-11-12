@@ -6,6 +6,7 @@
 
 const $ = (id) => document.getElementById(id);
 const SVG = "http://www.w3.org/2000/svg";
+const LENS_KEY = "gcg-scanner-lens"; // the lens chosen in the single-card scanner (app.js)
 
 export function setupMass({ index, collection, cardImage, toast }) {
   let worker = null, ready = null, nextId = 0;
@@ -52,6 +53,7 @@ export function setupMass({ index, collection, cardImage, toast }) {
 
   async function read(file) {
     if (!file) return;
+    stopLive();
     const status = $("mass-status");
     status.textContent = "Lade Erkennung …";
     found = [];
@@ -148,6 +150,154 @@ export function setupMass({ index, collection, cardImage, toast }) {
     $("mass-take").disabled = !total;
     $("mass-take").textContent = `${total} Karte${total === 1 ? "" : "n"} in die Liste übernehmen`;
   }
+
+  // ---- live camera ---------------------------------------------------------------------------
+  //
+  // Frames are read one after the other (the next as soon as the worker is free); LiveTracker
+  // combines them. The list below shows the confirmed cards so far; "Fertig" stops the camera and
+  // leaves the list to be taken over like the result of a photo.
+
+  let live = null; // { gen, stream, tracker }
+  let liveGen = 0;
+  const video = $("mass-video");
+
+  async function startLive() {
+    stopLive();
+    const gen = ++liveGen;
+    const current = () => gen === liveGen;
+    const status = $("mass-status");
+    found = [];
+    render(null);
+    $("mass-live").hidden = false;
+    $("mass-live-start").disabled = true;
+    status.textContent = "Starte Kamera …";
+    try {
+      const loading = start();
+      let lens = null;
+      try { lens = localStorage.getItem(LENS_KEY); } catch {}
+      // As large as the camera allows: the numbers are small in a picture of the whole table.
+      const size = { width: { ideal: 3840 }, height: { ideal: 2160 } };
+      let stream;
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({ audio: false, video: lens ? { deviceId: { exact: lens }, ...size } : { facingMode: { ideal: "environment" }, ...size } });
+      } catch (error) {
+        if (!lens) throw error;
+        stream = await navigator.mediaDevices.getUserMedia({ audio: false, video: { facingMode: { ideal: "environment" }, ...size } });
+      }
+      if (!current()) return stream.getTracks().forEach((t) => t.stop());
+      const { LiveTracker } = await import("./mass-live.js");
+      live = { gen, stream, tracker: new LiveTracker() };
+      const track = stream.getVideoTracks()[0];
+      if ((track.getCapabilities?.().focusMode ?? []).includes("continuous")) {
+        await track.applyConstraints({ advanced: [{ focusMode: "continuous" }] }).catch(() => {});
+      }
+      video.srcObject = stream;
+      await video.play();
+      status.textContent = "Lade Erkennung …";
+      await loading;
+      if (!current()) return;
+      liveLoop(gen);
+    } catch (error) {
+      if (!current()) return;
+      console.error(error);
+      stopLive();
+      status.textContent = `Kamera nicht verfügbar: ${error.message}`;
+    }
+  }
+
+  async function liveLoop(gen) {
+    const status = $("mass-status");
+    let errors = 0;
+    while (gen === liveGen && live) {
+      try {
+        if (!video.videoWidth) { await new Promise((r) => setTimeout(r, 100)); continue; }
+        const frame = await createImageBitmap(video);
+        const { width, height } = frame;
+        const { cards, ms } = await call({ type: "read", photo: frame }, [frame]);
+        if (gen !== liveGen || !live) return;
+        const reads = live.tracker.add(cards);
+        drawLive(reads, width, height);
+        const result = live.tracker.result();
+        found = result.cards.flatMap(({ cardNo, count }) => {
+          const variant = variantOf(cardNo);
+          return variant ? Array.from({ length: count }, () => ({ cardNo, variant, included: true })) : [];
+        });
+        render(null);
+        $("mass-take").hidden = true;
+        status.textContent = `${found.length} Karten sicher erkannt` +
+          (result.unconfirmed ? `, ${result.unconfirmed} erst einmal gesehen` : "") +
+          `. Bild ${result.frames} (${width} × ${height}, ${(ms / 1000).toFixed(1)} s). Langsam über alle Spalten schwenken, dann Fertig.`;
+        errors = 0;
+      } catch (error) {
+        console.error(error);
+        if (++errors >= 3) {
+          stopLive();
+          status.textContent = `Fehler: ${error.message}`;
+          return;
+        }
+      }
+    }
+  }
+
+  // Frames of the reads of the current frame on the video: green = confirmed, yellow = seen once.
+  function drawLive(reads, width, height) {
+    const svg = $("mass-live-overlay");
+    svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
+    const line = Math.max(3, width / 400);
+    svg.replaceChildren(...reads.map((r) => {
+      const group = document.createElementNS(SVG, "g");
+      if (r.confirmed) group.classList.add("confirmed");
+      const polygon = document.createElementNS(SVG, "polygon");
+      polygon.setAttribute("points", r.quad.map(([x, y]) => `${x},${y}`).join(" "));
+      polygon.setAttribute("stroke-width", line);
+      const h = Math.hypot(r.quad[3][0] - r.quad[0][0], r.quad[3][1] - r.quad[0][1]);
+      const label = document.createElementNS(SVG, "text");
+      label.setAttribute("x", Math.min(...r.quad.map((p) => p[0])) - h * 0.6);
+      label.setAttribute("y", r.quad.reduce((s, p) => s + p[1], 0) / 4 + h * 0.4);
+      label.setAttribute("font-size", h * 1.4);
+      label.setAttribute("text-anchor", "end");
+      label.textContent = r.label;
+      group.append(polygon, label);
+      return group;
+    }));
+  }
+
+  function stopLive() {
+    liveGen++;
+    live?.stream.getTracks().forEach((t) => t.stop());
+    live = null;
+    video.srcObject = null;
+    $("mass-live-overlay").replaceChildren();
+    $("mass-live").hidden = true;
+    $("mass-live-start").disabled = false;
+  }
+
+  $("mass-live-start").addEventListener("click", startLive);
+  $("mass-live-done").addEventListener("click", () => {
+    const result = live?.tracker.result();
+    stopLive();
+    render(null);
+    $("mass-status").textContent = found.length
+      ? `${found.length} Karten erkannt (${result?.frames ?? 0} Bilder). Fehlende Karten bitte einzeln scannen.`
+      : "Keine Karte sicher erkannt.";
+  });
+  $("mass-live-cancel").addEventListener("click", () => {
+    stopLive();
+    found = [];
+    render(null);
+    $("mass-status").textContent = "";
+  });
+  // The camera only runs in this view and while the app is visible.
+  const leave = () => { if (live && location.hash !== "#masse") stopLive(); };
+  window.addEventListener("hashchange", leave);
+  window.addEventListener("popstate", leave);
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden && live) {
+      stopLive();
+      $("mass-status").textContent = "Kamera gestoppt (App im Hintergrund). Die bisher erkannten Karten stehen unten.";
+      render(null);
+    }
+  });
 
   $("mass-zoom").addEventListener("click", () => {
     $("mass-photo").classList.toggle("zoomed");

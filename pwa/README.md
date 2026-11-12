@@ -15,6 +15,8 @@ Unter *Einstellungen* lassen sich die Scanner-Zeiten anpassen (Anzeigedauer, Tip
 *Massenscan*: Karten in Spalten übereinanderlegen, sodass oben rechts bei jeder Karte die Nummer sichtbar
 bleibt, Foto aufnehmen. Die App liest die Nummern (grüne Rahmen; Antippen schließt eine Karte aus) und
 übernimmt sie in die Liste. Die Variante muss dort noch geprüft werden („Variante prüfen“).
+*Live scannen* liest stattdessen laufend das Kamerabild: langsam über alle Spalten schwenken, die
+erkannten Karten sammeln sich (eine Karte zählt, sobald sie zweimal gelesen wurde), dann *Fertig*.
 
 ## Aufbau
 

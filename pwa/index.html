@@ -73,6 +73,18 @@
     <div class="row mass-actions">
       <label class="button primary">Foto aufnehmen<input id="mass-camera" type="file" accept="image/*" capture="environment" hidden></label>
       <label class="button">Foto wählen<input id="mass-file" type="file" accept="image/*" hidden></label>
+      <button id="mass-live-start">Live scannen</button>
+    </div>
+    <!-- Live: the camera picture is read again and again; the cards seen add up until "Fertig". -->
+    <div id="mass-live" class="mass-live" hidden>
+      <div class="mass-live-view">
+        <video id="mass-video" playsinline muted></video>
+        <svg id="mass-live-overlay" preserveAspectRatio="xMidYMid meet"></svg>
+      </div>
+      <div class="row">
+        <button id="mass-live-done" class="primary">Fertig</button>
+        <button id="mass-live-cancel">Abbrechen</button>
+      </div>
     </div>
     <p id="mass-status" class="muted small"></p>
     <div id="mass-photo" class="mass-photo" hidden>

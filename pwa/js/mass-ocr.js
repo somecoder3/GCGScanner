@@ -3,7 +3,7 @@
 // The number uses one fixed, narrow font. Character templates come from the official reference images
 // (their number is known), so no general OCR is needed: the row is cut out of the full-resolution
 // photo, straightened and scaled to TEXT px text height, split into characters (filled boxes for
-// LK/SP, rarity and year mark are skipped, touching characters are split by width), every character is
+// LK/SP, rarity and year mark are skipped, touching characters are cut at dashes and ink valleys), every character is
 // compared with the templates (normalised cross-correlation), and the sequence is aligned with every
 // known card number (edit distance with the template scores as substitution cost). Only a clear winner
 // counts; false hits from card art practically never align with a real number.
@@ -17,9 +17,9 @@ export const OCR_DEFAULTS = {
   maxCost: 0.3, // mean −log p per character of the best number (LDA: right ~0.15, wrong ~1.2)
   minMargin: 0.1, // mean cost gap to the second best card number
   shortKey: 5, // numbers up to this many characters (T-030, R-011, RP-025) are easily found in art …
-  shortMaxCost: 0.15, // … so they need a closer match
+  shortMaxCost: 0.08, // … so they need a closer match
   gapCost: 3, // a missing or extra character (≈ −log 0.05)
-  binarize: ["otsu", "adaptive"], // see characters()
+  binarize: ["otsu", "adaptive", "otsu2"], // see characters()
   classifier: "lda", // "lda" or "correlation" (templates.chars)
   ldaScale: 0.15, // LDA scores are log-likelihoods of a far too confident model: soften them
   cutBoxes: false, // stop at the rarity box (else the whole line is read and decode() skips around the number)
@@ -63,15 +63,23 @@ function warpStrip(cv, source, corners, sw, sh, invert, flip) {
   const bx = Math.max(0, Math.floor(Math.min(...xs)) - 2), by = Math.max(0, Math.floor(Math.min(...ys)) - 2);
   const bw = Math.min(sw0, Math.ceil(Math.max(...xs)) + 2) - bx, bh = Math.min(sh0, Math.ceil(Math.max(...ys)) + 2) - by;
   if (bw < 4 || bh < 4 || sw < 8 || sh < 8) return null;
-  const ctx = new OffscreenCanvas(bw, bh).getContext("2d", { willReadFrequently: true });
-  ctx.drawImage(source, bx, by, bw, bh, 0, 0, bw, bh);
-  const rgba = cv.matFromImageData(ctx.getImageData(0, 0, bw, bh));
-  const gray = new cv.Mat(), out = new cv.Mat();
+  // A grey copy of the whole photo (grayImage()) is cut directly; an image is drawn per strip, which
+  // is slow for GPU-backed bitmaps (video frames, canvases): every read-back waits for the GPU.
+  let rgba = null, gray;
+  if (source.gray) {
+    gray = source.gray.roi(new cv.Rect(bx, by, bw, bh));
+  } else {
+    const ctx = new OffscreenCanvas(bw, bh).getContext("2d", { willReadFrequently: true });
+    ctx.drawImage(source, bx, by, bw, bh, 0, 0, bw, bh);
+    rgba = cv.matFromImageData(ctx.getImageData(0, 0, bw, bh));
+    gray = new cv.Mat();
+    cv.cvtColor(rgba, gray, cv.COLOR_RGBA2GRAY);
+  }
+  const out = new cv.Mat();
   const src = cv.matFromArray(3, 1, cv.CV_32FC2, corners.flatMap(([x, y]) => [x - bx, y - by]));
   const dst = cv.matFromArray(3, 1, cv.CV_32FC2, flip ? [sw, sh, 0, sh, sw, 0] : [0, 0, sw, 0, 0, sh]);
   const m = cv.getAffineTransform(src, dst);
   try {
-    cv.cvtColor(rgba, gray, cv.COLOR_RGBA2GRAY);
     cv.warpAffine(gray, out, m, new cv.Size(sw, sh), cv.INTER_LINEAR, cv.BORDER_REPLICATE);
     if (invert) cv.bitwise_not(out, out);
     return out;
@@ -79,8 +87,23 @@ function warpStrip(cv, source, corners, sw, sh, invert, flip) {
     out.delete();
     throw error;
   } finally {
-    [rgba, gray, src, dst, m].forEach((mat) => mat.delete());
+    [rgba, gray, src, dst, m].forEach((mat) => mat?.delete());
   }
+}
+
+// The photo as one grey matrix for reading many strips: { gray, width, height } (gray.delete() when done).
+export function grayImage(cv, bitmap) {
+  const { width, height } = bitmap;
+  const ctx = new OffscreenCanvas(width, height).getContext("2d", { willReadFrequently: true });
+  ctx.drawImage(bitmap, 0, 0);
+  const rgba = cv.matFromImageData(ctx.getImageData(0, 0, width, height));
+  const gray = new cv.Mat();
+  try {
+    cv.cvtColor(rgba, gray, cv.COLOR_RGBA2GRAY);
+  } finally {
+    rgba.delete();
+  }
+  return { gray, width, height };
 }
 
 // ---- characters --------------------------------------------------------------------------------
@@ -97,6 +120,13 @@ function characters(cv, strip, binarize = "otsu", maxLines = 3, cutBoxes = false
     if (binarize === "adaptive") {
       const block = 2 * Math.round(TEXT * 1.2) + 1;
       cv.adaptiveThreshold(strip, bin, 255, cv.ADAPTIVE_THRESH_MEAN_C, cv.THRESH_BINARY, block, -8);
+    } else if (binarize === "otsu2") {
+      // Otsu again among the pixels above the first Otsu threshold: when bright surroundings (a
+      // light card edge, the table) share the strip, the first threshold separates only the dark
+      // tab from everything else and the characters run together.
+      const first = otsuOf(strip.data, 0);
+      const second = otsuOf(strip.data, first + 1);
+      cv.threshold(strip, bin, second, 255, cv.THRESH_BINARY);
     } else {
       cv.threshold(strip, bin, 0, 255, cv.THRESH_BINARY | cv.THRESH_OTSU);
     }
@@ -118,7 +148,7 @@ function characters(cv, strip, binarize = "otsu", maxLines = 3, cutBoxes = false
     for (const { p, members } of anchors) {
       if (taken.has(p) || members.length < 2) continue;
       members.forEach((q) => taken.add(q));
-      const chars = splitLine(members.sort((a, b) => a.x - b.x), cutBoxes);
+      const chars = splitLine(members.sort((a, b) => a.x - b.x), cutBoxes, bin);
       if (chars.length >= 3) lines.push(chars);
       if (lines.length >= maxLines) break;
     }
@@ -128,8 +158,32 @@ function characters(cv, strip, binarize = "otsu", maxLines = 3, cutBoxes = false
   }
 }
 
-// One line of parts → characters (of the number only, if cutBoxes).
-function splitLine(parts, cutBoxes) {
+// How touching characters are split: "valleys" (cut at dashes and ink valleys, see splitPart) or
+// "pitch" (equal parts by the usual character pitch; the method up to 12 Nov.).
+export const SPLIT = { mode: "valleys" };
+
+// Otsu threshold of the grey values ≥ from (8-bit data).
+function otsuOf(data, from) {
+  const hist = new Float64Array(256);
+  for (const value of data) if (value >= from) hist[value]++;
+  let total = 0, sum = 0;
+  for (let i = from; i < 256; i++) { total += hist[i]; sum += i * hist[i]; }
+  let wB = 0, sumB = 0, best = from, bestVar = -1;
+  for (let t = from; t < 256; t++) {
+    wB += hist[t];
+    if (!wB) continue;
+    const wF = total - wB;
+    if (!wF) break;
+    sumB += t * hist[t];
+    const mB = sumB / wB, mF = (sum - sumB) / wF;
+    const between = wB * wF * (mB - mF) ** 2;
+    if (between > bestVar) { bestVar = between; best = t; }
+  }
+  return best;
+}
+
+// One line of parts → characters (of the number only, if cutBoxes). bin: the binarized strip.
+function splitLine(parts, cutBoxes, bin) {
   const heights = parts.map((p) => p.h).sort((a, b) => a - b);
   const textH = heights[Math.floor(heights.length / 2)] || TEXT;
   const pitch = textH * 0.62;
@@ -143,11 +197,59 @@ function splitLine(parts, cutBoxes) {
       continue;
     }
     if (p.w < textH * 0.12 || p.h < textH * 0.7) continue;
+    if (SPLIT.mode === "valleys" && bin && !isBox(p)) {
+      chars.push(...splitPart(p, bin, textH, pitch));
+      continue;
+    }
     // Touching characters: split by the usual character pitch.
     const count = Math.max(1, Math.round((p.w + textH * 0.1) / pitch));
     for (let k = 0; k < count; k++) chars.push({ x: p.x + (p.w * k) / count, y: p.y, w: p.w / count, h: p.h });
   }
   return chars;
+}
+
+// Splits one connected part into characters. On photos the digits of "06-089" often touch each other
+// and the dash; equal parts by pitch then put the boxes between the characters and count the dash as
+// one. Instead: columns with (almost) no ink or with ink only in the middle band (the dash) separate
+// characters; a piece still wider than one character is cut at its deepest ink valley, and only if
+// there is none, by pitch.
+function splitPart(p, bin, textH, pitch) {
+  const stride = bin.cols, data = bin.data;
+  const band = Math.max(1, Math.round(p.h * 0.22));
+  const ink = new Array(p.w).fill(0), outer = new Array(p.w).fill(0);
+  for (let i = 0; i < p.w; i++) {
+    const x = p.x + i;
+    for (let y = p.y; y < p.y + p.h; y++) {
+      if (!data[y * stride + x]) continue;
+      ink[i]++;
+      if (y < p.y + band || y >= p.y + p.h - band) outer[i]++;
+    }
+  }
+  const sep = ink.map((n, i) => n <= p.h * 0.06 || (outer[i] === 0 && n < p.h * 0.45));
+  // Runs of character columns.
+  const pieces = [];
+  for (let i = 0; i < p.w; ) {
+    if (sep[i]) { i++; continue; }
+    let j = i;
+    while (j < p.w && !sep[j]) j++;
+    if (j - i >= Math.max(2, textH * 0.12)) pieces.push([i, j]);
+    i = j;
+  }
+  // Too wide: cut at the deepest valley away from the ends, recursively.
+  const out = [];
+  const cut = ([a, b]) => {
+    const w = b - a;
+    if (w <= pitch * 1.3) { out.push([a, b]); return; }
+    const margin = Math.max(2, Math.round(textH * 0.25));
+    let best = -1;
+    for (let i = a + margin; i < b - margin; i++) if (best < 0 || ink[i] < ink[best]) best = i;
+    const peak = Math.max(...ink.slice(a, b));
+    if (best >= 0 && ink[best] < peak * 0.6) { cut([a, best]); cut([best + 1, b]); return; }
+    const count = Math.max(1, Math.round((w + textH * 0.1) / pitch));
+    for (let k = 0; k < count; k++) out.push([a + Math.round((w * k) / count), a + Math.round((w * (k + 1)) / count)]);
+  };
+  pieces.forEach(cut);
+  return out.map(([a, b]) => ({ x: p.x + a, y: p.y, w: b - a, h: p.h }));
 }
 
 // Character image → zero-mean, unit-length vector of GW × GH. The box keeps the character's
@@ -187,7 +289,9 @@ const REF_TEXT = 14;
 // sampled several times (blur and small shifts of its box, so the clean references look more like
 // photos). Returns { chars: mean vector per character (correlation templates), lda: linear
 // discriminant per character, counts, used, skipped }.
-export async function buildTemplates(cv, variants, loadImage, { limit = 400, blurs = [0.6, 1.2, 2], shifts = [-1.5, 0, 1.5], shrink = 0.2, onProgress } = {}) {
+// strokes: stroke width variants, 0 = as is, −1/+1 = grey erosion/dilation with a 2 × 2 kernel
+// (photos show the characters thinner or bolder than the references).
+export async function buildTemplates(cv, variants, loadImage, { limit = 400, blurs = [0.6, 1.2, 2], shifts = [-1.5, 0, 1.5], strokes = [0], shrink = 0.2, onProgress } = {}) {
   const samples = []; // { ch, v }
   let used = 0, skipped = 0;
   const pool = variants.filter((v) => /^[A-Z]+\d*-\d+$/.test(v.cardNo));
@@ -205,11 +309,23 @@ export async function buildTemplates(cv, variants, loadImage, { limit = 400, blu
       const key = keyOf(variant.cardNo);
       const chars = characters(cv, strip, "otsu", 1, true)[0] ?? [];
       if (chars.length !== key.length) { skipped++; continue; }
-      for (const blur of blurs) {
-        cv.GaussianBlur(strip, soft, new cv.Size(0, 0), blur);
-        chars.forEach((box, k) => {
-          for (const dx of shifts) samples.push({ ch: key[k], v: vectorOf(cv, soft, { ...box, x: box.x + dx }) });
-        });
+      const kernel = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(2, 2));
+      const shaped = new cv.Mat();
+      try {
+        for (const stroke of strokes) {
+          if (stroke < 0) cv.erode(strip, shaped, kernel);
+          else if (stroke > 0) cv.dilate(strip, shaped, kernel);
+          else strip.copyTo(shaped);
+          for (const blur of blurs) {
+            cv.GaussianBlur(shaped, soft, new cv.Size(0, 0), blur);
+            chars.forEach((box, k) => {
+              for (const dx of shifts) samples.push({ ch: key[k], v: vectorOf(cv, soft, { ...box, x: box.x + dx }) });
+            });
+          }
+        }
+      } finally {
+        kernel.delete();
+        shaped.delete();
       }
       used++;
     } finally {
@@ -330,9 +446,12 @@ export function vocabulary(cardNumbers) {
 export function readRow(cv, bitmap, row, templates, vocab, options = {}) {
   const o = { ...OCR_DEFAULTS, ...options };
   row = straighten(cv, bitmap, row);
-  // Both text polarities (the finder's guess is not always right) and both orientations.
-  const attempts = [[row.polarity === "dunkel", false], [row.polarity === "dunkel", true], [row.polarity !== "dunkel", false], [row.polarity !== "dunkel", true]];
+  // Both text polarities (the finder's guess is not always right) and both orientations (unless
+  // options.flips names the orientations to try, e.g. [false] when the column is known).
+  const flips = o.flips ?? [false, true];
+  const attempts = [row.polarity === "dunkel", row.polarity !== "dunkel"].flatMap((invert) => flips.map((flip) => [invert, flip]));
   let best = null;
+  const lines = []; // every read line with its character costs, for redecode()
   for (const [invert, flip] of attempts) {
     const strip = stripFromQuad(cv, bitmap, row.quad, invert, flip);
     if (!strip) continue;
@@ -368,13 +487,32 @@ export function readRow(cv, bitmap, row, templates, vocab, options = {}) {
           });
           const decoded = decode(scores, vocab, o);
           if (o.trace) o.trace.push({ invert, flip, binarize, text, ...decoded });
-          if (decoded && (!best || decoded.cost < best.cost)) best = { ...decoded, text, flip, invert, binarize };
+          // Where the read line lies across the row, in row heights from the quad centre along TL → BL
+          // (the strip centre is 0.95 TEXT down; a flipped strip runs the other way).
+          const lineY = chars.reduce((sum, c) => sum + c.y + c.h / 2, 0) / chars.length;
+          const offset = ((lineY - strip.rows / 2) / TEXT) * (flip ? -1 : 1);
+          lines.push({ scores, text, flip, invert, binarize, offset });
+          if (decoded && (!best || decoded.cost < best.cost)) best = { ...decoded, text, flip, invert, binarize, offset, quad: row.quad };
         }
       }
     } finally {
       strip.delete();
     }
   }
+  if (best) best.lines = { lines, quad: row.quad };
+  return best;
+}
+
+// Decodes the lines of an earlier readRow() result again, e.g. with a smaller vocabulary (only the
+// sets on the photo). Returns a result like readRow() or null.
+export function redecode(read, vocab, options = {}) {
+  const o = { ...OCR_DEFAULTS, ...options };
+  let best = null;
+  for (const { scores, ...line } of read.lines?.lines ?? []) {
+    const decoded = decode(scores, vocab, o);
+    if (decoded && (!best || decoded.cost < best.cost)) best = { ...decoded, ...line, quad: read.lines.quad };
+  }
+  if (best) best.lines = read.lines;
   return best;
 }
 
@@ -413,7 +551,7 @@ function straighten(cv, bitmap, row) {
 // Returns the best { cardNo, cost, margin } or null.
 function decode(scores, vocab, o) {
   const n = scores.length;
-  let best = null, second = null;
+  const top = [];
   for (const { cardNo, key } of vocab.list) {
     const L = key.length;
     if (L > n + 2 || L < n * o.minCoverage) continue;
@@ -433,15 +571,21 @@ function decode(scores, vocab, o) {
       prev = cur;
     }
     const cost = end / L;
-    if (!best || cost < best.cost) { second = best; best = { cardNo, cost }; }
-    else if (!second || cost < second.cost) second = { cardNo, cost };
+    // The cheapest TOP numbers, best first.
+    if (top.length < TOP || cost < top.at(-1).cost) {
+      top.push({ cardNo, cost });
+      top.sort((a, b) => a.cost - b.cost);
+      if (top.length > TOP) top.pop();
+    }
   }
+  const [best, second] = top;
   if (!best) return null;
   const margin = second ? second.cost - best.cost : 1;
   const limit = keyOf(best.cardNo).length <= o.shortKey ? Math.min(o.maxCost, o.shortMaxCost) : o.maxCost;
-  if (best.cost > limit || margin < o.minMargin) return { cardNo: null, cost: best.cost, margin, guess: best.cardNo };
-  return { cardNo: best.cardNo, cost: best.cost, margin };
+  if (best.cost > limit || margin < o.minMargin) return { cardNo: null, cost: best.cost, margin, guess: best.cardNo, top };
+  return { cardNo: best.cardNo, cost: best.cost, margin, top };
 }
+const TOP = 5;
 
 // For dev/mass-eval.html: the strip of a row as ImageData plus its character boxes (both orientations).
 export function inspectRow(cv, bitmap, row) {
