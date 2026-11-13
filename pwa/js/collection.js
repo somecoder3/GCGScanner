@@ -2,6 +2,16 @@
 
 const STORAGE_KEY = "gcg-scanner-collection-v1";
 
+// Export formats of the list (Collection.export()), in the order of the selection in the list view.
+export const EXPORT_FORMATS = [
+  { id: "exburst", name: "ExBurst CSV", label: "ExBurst CSV", hint: "jetzt ExBurst öffnen und beim Import einfügen" },
+  { id: "simple", name: "Einfach", label: "Einfach (2x GD06-004)" },
+  { id: "limitless", name: "Limitless", label: "Limitless (2 Name GD06-004)" },
+  { id: "names", name: "Nur Namen", label: "Nur Namen (2x Name)" },
+  { id: "msa", name: "MSA Shuffle Fixer", label: "MSA Shuffle Fixer (by captsetitoff)" },
+  { id: "tts", name: "Tabletop Simulator", label: "Tabletop Simulator" },
+];
+
 export class Collection {
   // index: the reference index (for looking up variants by ExBurst id)
   constructor(index) {
@@ -64,9 +74,54 @@ export class Collection {
 
   // ExBurst collection import format.
   csv() {
-    const lines = ["Card No,Owned,Wanted,Trading,Tags"];
+    return this.export("exburst");
+  }
+
+  // The list as text in one of EXPORT_FORMATS, sorted by card number (ExBurst ids, e.g. GD06-002-ALT1).
+  export(format) {
     const sorted = [...this.entries.values()].sort((a, b) => a.variant.id.localeCompare(b.variant.id));
-    for (const { variant, count } of sorted) lines.push(`${variant.id},${count},0,0,`);
+    const lines = [];
+    switch (format) {
+      case "simple":
+        for (const { variant, count } of sorted) lines.push(`${count}x ${variant.id}`);
+        break;
+      case "limitless":
+        for (const { variant, count } of sorted) lines.push(`${count} ${variant.name} ${variant.id}`);
+        break;
+      case "names": {
+        // Variants of one card (alt arts) share the name: one line per name.
+        const byName = new Map();
+        for (const { variant, count } of sorted) byName.set(variant.name, (byName.get(variant.name) ?? 0) + count);
+        for (const [name, count] of byName) lines.push(`${count}x ${name}`);
+        break;
+      }
+      case "msa": {
+        // msafixer.com: one line per copy, in random order; alternate arts as their base card.
+        const copies = [];
+        for (const { variant, count } of sorted) for (let k = 0; k < count; k++) copies.push(`1 ${variant.cardNo}`);
+        for (let i = copies.length - 1; i > 0; i--) {
+          const j = Math.floor(Math.random() * (i + 1));
+          [copies[i], copies[j]] = [copies[j], copies[i]];
+        }
+        lines.push(...copies);
+        break;
+      }
+      case "tts": {
+        // Tabletop Simulator deck list; alternate arts counted with their base card.
+        lines.push("// Main Deck");
+        const byCard = new Map();
+        for (const { variant, count } of sorted) {
+          const card = byCard.get(variant.cardNo) ?? { name: variant.name, count: 0 };
+          card.count += count;
+          byCard.set(variant.cardNo, card);
+        }
+        for (const [cardNo, { name, count }] of [...byCard].sort(([a], [b]) => a.localeCompare(b))) lines.push(`${count} x ${cardNo} ${name}`);
+        break;
+      }
+      default:
+        lines.push("Card No,Owned,Wanted,Trading,Tags");
+        for (const { variant, count } of sorted) lines.push(`${variant.id},${count},0,0,`);
+    }
     return lines.join("\n") + "\n";
   }
 

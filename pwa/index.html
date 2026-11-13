@@ -23,7 +23,7 @@
     <nav class="home-menu">
       <button id="go-scan" class="primary">Einzelkarten scannen<small>Eine Karte nach der anderen in den Rahmen halten</small></button>
       <button id="go-mass">Massenscan<small>Viele Karten auf einem Foto (Nummern oben rechts sichtbar)</small></button>
-      <button id="go-list">Erkannte Karten (<span id="home-count">0</span>)<small>Varianten prüfen, CSV für ExBurst</small></button>
+      <button id="go-list">Erkannte Karten (<span id="home-count">0</span>)<small>Varianten prüfen, Liste kopieren (ExBurst u. a.)</small></button>
       <button id="go-settings">Einstellungen<small>Scanner-Zeiten, Erkennung, Speicher</small></button>
     </nav>
   </main>
@@ -127,9 +127,8 @@
     <p id="empty" class="muted empty">Noch keine Karten. Zurück zum Scanner, Karte in den Rahmen halten und übernehmen.</p>
 
     <div class="export">
-      <button id="share" class="primary">CSV teilen</button>
-      <button id="copy">CSV kopieren</button>
-      <button id="download">CSV speichern</button>
+      <select id="export-format" aria-label="Format der Liste"></select>
+      <button id="copy" class="primary">Liste kopieren</button>
     </div>
     <!-- No import API: copy the CSV above, then paste it on ExBurst's collection import page. -->
     <a id="exburst" class="button wide" href="https://exburst.dev/gundam/collection/sets" target="_blank" rel="noopener noreferrer">ExBurst-Collection öffnen ↗</a>

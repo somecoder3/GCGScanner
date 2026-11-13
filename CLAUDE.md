@@ -22,8 +22,15 @@ Der Nutzer kommt aus der Webentwicklung.
   - Startseite (seit 11. Nov., Nutzerwunsch) mit *Einzelkarten scannen*, *Massenscan* (`#masse`, siehe
     „Massenscan“), *Erkannte Karten* und *Einstellungen*.
   - Scanner `#scan` (eine Karte im Rahmen, Kamera startet beim Öffnen) → *Fertig* → Übersicht `#liste`
-    mit Bildern, Mengen, **Variantenauswahl** und CSV teilen/kopieren/speichern. Liste bleibt in
-    `localStorage`.
+    mit Bildern, Mengen, **Variantenauswahl** und *Liste kopieren*. Liste bleibt in `localStorage`.
+  - **Export (13. Nov., Nutzerwunsch):** Statt *CSV teilen/kopieren/speichern* nur noch *Liste kopieren*
+    mit Formatauswahl daneben (`EXPORT_FORMATS` und `Collection.export()` in `collection.js`, Wahl in
+    `gcg-scanner-export`): ExBurst CSV (wie bisher), Einfach `{n}x {id}`, Limitless `{n} {Name} {id}`,
+    Nur Namen `{n}x {Name}` (Varianten gleichen Namens zusammengezählt). Als Id dient überall die
+    ExBurst-Nummer (`GD01-001-ALT2`), sortiert nach Id. Dazu nach Beispielen des Nutzers (aus einem
+    Deckbuilder, Haken „Include alternate arts“ aus): *MSA Shuffle Fixer (by captsetitoff)*
+    (msafixer.com) eine Zeile `1 {Nummer}` pro Exemplar in zufälliger Reihenfolge, *Tabletop Simulator*
+    `// Main Deck` und `{n} x {Nummer} {Name}`; bei beiden zählen Alt Arts als Grundkarte (`cardNo`).
   - Einstellungen `#einstellungen`: Scanner-Zeiten (siehe „Scanner-Robustheit“), Rechenweg, Index,
     Entzerren, Speicher/Kartenbilder löschen. „Liste leeren“ steht in der Übersicht.
   - ExBurst-Import vorerst von Hand: Button *ExBurst-Collection öffnen* → `https://exburst.dev/gundam/collection/sets`

@@ -4,9 +4,9 @@ Erkennt Gundam-Card-Game-Karten mit der Handykamera, sammelt sie in einer Liste 
 sie im ExBurst-Importformat. Läuft komplett im Browser und nach dem ersten Laden auch offline.
 
 Ablauf in der App: Startseite → *Einzelkarten scannen* → Karte in den Rahmen halten → grüner Rahmen → *Übernehmen*
-(oder auf den Treffer tippen) → *Fertig* → Varianten prüfen, Mengen anpassen → *CSV teilen /
-kopieren / speichern* → *ExBurst-Collection öffnen* (exburst.dev/gundam/collection/sets) und dort beim
-Import einfügen.
+(oder auf den Treffer tippen) → *Fertig* → Varianten prüfen, Mengen anpassen → Format wählen (ExBurst
+CSV, Einfach, Limitless, Nur Namen, MSA Shuffle Fixer, Tabletop Simulator) → *Liste kopieren* → für ExBurst: *ExBurst-Collection öffnen*
+(exburst.dev/gundam/collection/sets) und dort beim Import einfügen.
 
 Falsch erkannt? Das ✕ neben dem Treffer schließt die Karte aus, bis eine Karte übernommen wird.
 Beim Booster-Öffnen oben rechts (▾) das Set wählen, dann vergleicht die App nur mit dessen Karten.
@@ -26,7 +26,7 @@ erkannten Karten sammeln sich (eine Karte zählt, sobald sie zweimal gelesen wur
 | `js/embedder.js` | MobileNetV2-Merkmale über onnxruntime-web, WebGPU mit Rückfall auf wasm |
 | `js/matcher.js` | Index laden (int8, wahlweise voll float32), Suche, Nachdrucke derselben Illustration finden |
 | `js/detector.js`, `js/detector-worker.js`, `js/rectify.js` | Kartenränder finden und Karte entzerren (OpenCV.js im Worker) |
-| `js/collection.js` | Liste der gescannten Karten (localStorage), CSV-Export |
+| `js/collection.js` | Liste der gescannten Karten (localStorage), Export in mehrere Formate (`EXPORT_FORMATS`) |
 | `js/imagepack.js`, `js/images.js` | Verschlüsselte Bildpakete: Passwort, Entschlüsseln, lokaler Bildspeicher |
 | `sw.js` | Service Worker: Offline-Cache, entschlüsselte Bilder unter `images/card/`, Isolations-Header |
 | `data/` | Index und Kartenliste, **committet** (nur lokal erzeugbar) |

@@ -2,7 +2,7 @@
 
 import { createEmbedder, DEFAULT_BACKEND } from "./embedder.js";
 import { loadIndex, search, siblings, LOOK_ALIKE } from "./matcher.js";
-import { Collection } from "./collection.js";
+import { Collection, EXPORT_FORMATS } from "./collection.js";
 import { cardImage } from "./images.js";
 import { ImageStore } from "./imagepack.js";
 import { createDetector } from "./detector.js";
@@ -33,6 +33,7 @@ const BACKEND_KEY = "gcg-scanner-backend";
 const INDEX_KEY = "gcg-scanner-index";
 const RECTIFY_KEY = "gcg-scanner-rectify";
 const SET_KEY = "gcg-scanner-set";
+const EXPORT_KEY = "gcg-scanner-export";
 // The guide crop only has to stay sharp at the model's 224 px, so the detector can work on a small copy.
 const DETECT_OPTIONS = { warpSide: 640 };
 const LIST_HASH = "#liste";
@@ -664,8 +665,7 @@ function renderCount() {
 function renderList() {
   const entries = [...collection.entries.values()];
   $("empty").hidden = entries.length > 0;
-  for (const id of ["share", "copy", "download"]) $(id).disabled = !entries.length;
-  $("share").hidden = !canShareFiles();
+  $("copy").disabled = !entries.length;
 
   let toCheck = 0;
   $("items").replaceChildren(...entries.map((entry) => {
@@ -741,37 +741,23 @@ function openVariants(variant) {
 
 // ---- Export -----------------------------------------------------------------------------------
 
-function csvFile() {
-  return new File([collection.csv()], `gcg-scan-${new Date().toISOString().slice(0, 10)}.csv`, { type: "text/csv" });
-}
-
-function canShareFiles() {
-  try { return !!navigator.canShare?.({ files: [new File([""], "x.csv", { type: "text/csv" })] }); } catch { return false; }
-}
-
-$("share").addEventListener("click", async () => {
-  try {
-    await navigator.share({ files: [csvFile()], title: "GCG Scan für ExBurst" });
-  } catch (error) {
-    if (error.name !== "AbortError") toast(`Teilen fehlgeschlagen: ${error.message}`);
-  }
+// The list is copied in the format chosen next to the button (kept in localStorage).
+const formatSelect = $("export-format");
+formatSelect.replaceChildren(...EXPORT_FORMATS.map((f) => new Option(f.label, f.id)));
+try { formatSelect.value = localStorage.getItem(EXPORT_KEY) ?? "exburst"; } catch {}
+if (!formatSelect.value) formatSelect.value = "exburst";
+formatSelect.addEventListener("change", () => {
+  try { localStorage.setItem(EXPORT_KEY, formatSelect.value); } catch {}
 });
 
 $("copy").addEventListener("click", async () => {
+  const format = EXPORT_FORMATS.find((f) => f.id === formatSelect.value) ?? EXPORT_FORMATS[0];
   try {
-    await navigator.clipboard.writeText(collection.csv());
-    toast("CSV kopiert – jetzt ExBurst öffnen und beim Import einfügen");
+    await navigator.clipboard.writeText(collection.export(format.id));
+    toast(`Liste kopiert (${format.name})${format.hint ? ` – ${format.hint}` : ""}`);
   } catch (error) {
     toast(`Kopieren fehlgeschlagen: ${error.message}`);
   }
-});
-
-$("download").addEventListener("click", () => {
-  const link = document.createElement("a");
-  link.href = URL.createObjectURL(csvFile());
-  link.download = csvFile().name;
-  link.click();
-  setTimeout(() => URL.revokeObjectURL(link.href), 1000);
 });
 
 $("clear").addEventListener("click", () => {
